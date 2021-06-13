@@ -28,4 +28,4 @@ void foo() {
 
 Please file feature requests and bugs at the [issue tracker][tracker].
 
-[tracker]: http://github.com/silentdoer/concurrent_executor/issues
+[tracker]: https://github.com/Silentdoer/concurrent_executor/issues
