@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
 
@@ -12,7 +13,7 @@ class Executor {
   /// 用于生成每个isolate的debugName
   int _isolateDebugNameIndex = 1;
 
-  String get _isolateDebugName => 'isolate_${_isolateDebugNameIndex++}';
+  String get _isolateDebugName => 'executor_worker_${_isolateDebugNameIndex++}';
 
   Map<String, ExecutorIsolateModel> isolates = {};
 
@@ -21,20 +22,22 @@ class Executor {
 
   // 先主要用到coreIsolateSize和tasks
   // 创建Executor后必须await先执行init；
-  Executor(this.coreIsolateSize);
+  Executor._(this.coreIsolateSize);
 
   /// 初始化线程池【接下来的优化方向是看init是否用一个单独的master isolate来处理，然后main里的execute都往master isolate发消息】
-  void init() async {
-    receivePort = ReceivePort();
-    receivePort.listen(isolateMessageProcessor);
+  static FutureOr<Executor> createExecutor(int coreSize) async {
+    var executor = Executor._(coreSize);
+    executor.receivePort = ReceivePort();
+    executor.receivePort.listen(executor.isolateMessageProcessor);
     // 一次性先创建coreSize个核心线程
-    for (var i = 0; i < coreIsolateSize; i++) {
-      var debugName = _isolateDebugName;
-      isolates[debugName] = ExecutorIsolateModel();
-      var isolate = await Isolate.spawn(isolateHandler, receivePort.sendPort,
+    for (var i = 0; i < executor.coreIsolateSize; i++) {
+      var debugName = executor._isolateDebugName;
+      executor.isolates[debugName] = ExecutorIsolateModel();
+      var isolate = await Isolate.spawn(isolateHandler, executor.receivePort.sendPort,
           debugName: debugName);
-      isolates[debugName]!.isolate = isolate;
+      executor.isolates[debugName]!.isolate = isolate;
     }
+    return executor;
   }
 
   void isolateMessageProcessor(dynamic message) {

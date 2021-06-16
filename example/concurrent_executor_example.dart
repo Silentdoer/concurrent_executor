@@ -4,8 +4,7 @@ import 'dart:isolate';
 import 'package:concurrent_executor/concurrent_executor.dart';
 
 void main(List<String> args) async {
-  var executor = Executor(3);
-  executor.init();
+  var executor = await Executor.createExecutor(3);
 
   executor.execute(fuck);
 
