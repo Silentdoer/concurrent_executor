@@ -15,10 +15,10 @@ class Executor {
 
   String get _isolateDebugName => 'executor_worker_${_isolateDebugNameIndex++}';
 
-  Map<String, ExecutorIsolateModel> isolates = {};
+  Map<String, _Worker> isolates = {};
 
   // 在dart里list，queue等只有length没有capacity；
-  Queue<TaskModel> tasks = Queue.from([]);
+  Queue<Runnable> tasks = Queue.from([]);
 
   // 先主要用到coreIsolateSize和tasks
   // 创建Executor后必须await先执行init；
@@ -28,94 +28,112 @@ class Executor {
   static FutureOr<Executor> createExecutor(int coreSize) async {
     var executor = Executor._(coreSize);
     executor.receivePort = ReceivePort();
-    executor.receivePort.listen(executor.isolateMessageProcessor);
+    var bstream = executor.receivePort.asBroadcastStream();
+    
     // 一次性先创建coreSize个核心线程
     for (var i = 0; i < executor.coreIsolateSize; i++) {
       var debugName = executor._isolateDebugName;
-      executor.isolates[debugName] = ExecutorIsolateModel();
-      var isolate = await Isolate.spawn(isolateHandler, executor.receivePort.sendPort,
+      var isolate = await Isolate.spawn(_workerHandler, executor.receivePort.sendPort,
           debugName: debugName);
-      executor.isolates[debugName]!.isolate = isolate;
+      await for (var msg in bstream) {
+        if (msg is SendPort) {
+          executor.isolates[debugName] = _Worker(true, isolate, msg, true);
+          break;
+        }
+      }
     }
+    // 等所有worker都初始化完毕后listen
+    bstream.listen(executor._workerMessageProcessor);
     return executor;
   }
 
-  void isolateMessageProcessor(dynamic message) {
-    if (message is IsolateSendPort) {
+  void _workerMessageProcessor(dynamic message) {
+    if (message is _Message) {
       // 这个isolate里是发了IsolateSendPort表示肯定是没有task执行了【可以考虑这个free由参数里提供】
-      isolates[message.debugName]!.free = true;
-      if (tasks.isNotEmpty && isolates[message.debugName]!.free) {
-        message.sendPort.send([tasks.removeFirst()]);
-        isolates[message.debugName]!.free = false;
+      var isolate = isolates[message.workerDebugName] as _Worker;
+      // 先只支持empty的请求
+      if (message.type == _MessageType.empty) {
+        // 由于数据不能跨isolate，因此只能发消息让master来置为free
+        isolate.free = true;
+      }
+      // 判断tasks不为空，后面的是否free其实都可以不判断，没有空也能发task给它【TODO 后续优化】
+      if (tasks.isNotEmpty && isolate.free) {
+        isolate.sendPort.send([_TaskWrapper(tasks.removeFirst())]);
+        isolate.free = false;
         return;
       }
-      // 不可能为空
-      isolates[message.debugName]!.sendPort = message.sendPort;
-      // 所有元素已集齐，inited
-      isolates[message.debugName]!.enabled = true;
     } else {
       throw ArgumentError('can not send this type message from sub isolate.');
     }
   }
 
-  // 先只能runnable，且不返还Future
+  // 先只能runnable，且不返还Future，task必须是有静态生命周期的
   void execute(Runnable task) {
-    var tmp =
+    var availableWorker =
         isolates.values.where((isolate) => isolate.enabled && isolate.free);
-    if (tmp.isEmpty) {
-      tasks.addLast(TaskModel(task));
+    if (availableWorker.isEmpty) {
+      tasks.addLast(task);
     } else {
-      var freeIsolate = tmp.first;
-      freeIsolate.sendPort!.send([TaskModel(task)]);
+      // 此时存在已经启用且空闲的，用符合条件的第一个即可
+      var freeIsolate = availableWorker.first;
+      freeIsolate.sendPort.send([_TaskWrapper(task)]);
       freeIsolate.free = false;
-      // 由于一次性只发一条消息，然后子isolate的receivePort就作废了（其对应的sendPort也作废），因此这里直接设置为null和不可用【当然此时子isolate是在运作的】
-      freeIsolate.sendPort = null;
-      freeIsolate.enabled = false;
     }
   }
 }
 
+enum _MessageType {
+  // 告诉master自己task空了
+  empty,
+  // 请求拉取task，可能还没有空，但是快空了
+  pull,
+}
+
+class _Message {
+  _MessageType type;
+
+  String workerDebugName;
+
+  _Message(this.type, this.workerDebugName);
+}
+
 /// 用于executor记录isolate的情况
-class ExecutorIsolateModel {
+class _Worker {
   bool enabled = false;
 
-  late Isolate isolate;
+  Isolate isolate;
 
   /// 网Isolate发送业务消息【由于用了receivePort.first后就不能listen了，因此这个放到callback里赋值
-  SendPort? sendPort;
+  SendPort sendPort;
 
   /// 是否空闲
   bool free = true;
+
+  _Worker(this.enabled, this.isolate, this.sendPort, this.free);
 }
 
-class IsolateSendPort {
-  String debugName;
-  SendPort sendPort;
+class _TaskWrapper {
+  Runnable task;
 
-  IsolateSendPort(this.debugName, this.sendPort);
+  _TaskWrapper(this.task);
 }
 
-/// Function作为消息必须用类包一下
-class TaskModel {
-  dynamic task;
-
-  TaskModel(this.task);
-}
-
-void isolateHandler(SendPort sendPort) async {
-  var tasks = Queue<TaskModel>.from([]);
+void _workerHandler(SendPort sendPort) async {
+  var tasks = Queue<_TaskWrapper>.from([]);
   var currentDebugName = Isolate.current.debugName as String;
+  var receivePort = ReceivePort(currentDebugName);
+  // 往master isolate里发送用于和worker通信的sendPort
+  sendPort.send(receivePort.sendPort);
+  var bstream = receivePort.asBroadcastStream();
   while (true) {
     if (tasks.isNotEmpty) {
-      // execute
+      // execute【在一个文件里是可以直接发送函数的，但是用了包不知道为什么就不行了】
       var taskModel = tasks.removeFirst();
       taskModel.task();
     } else {
-      // receivePort无法重复使用，所以只能消费一条消息后break废弃掉
-      var receivePort = ReceivePort(currentDebugName);
-      sendPort.send(IsolateSendPort(currentDebugName, receivePort.sendPort));
-      await for (var listMsg in receivePort) {
-        assert(listMsg is List<TaskModel>);
+      // tasks里没有task任务了，请求isolate master分配一些，告诉master是哪个worker要task【甚至还可以支持要多少。。】
+      sendPort.send(_Message(_MessageType.empty, currentDebugName));
+      await for (var listMsg in bstream) {
         tasks.addAll(listMsg);
         break;
       }
