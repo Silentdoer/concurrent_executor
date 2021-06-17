@@ -7,9 +7,8 @@ A simple usage example:
 ```dart
 import 'package:concurrent_executor/concurrent_executor.dart';
 
-void main() {
-  var executor = Executor(2);
-  executor.init();
+void main() async {
+  var executor = await Executor.createExecutor(2);
 
   executor.execute(foo);
 
