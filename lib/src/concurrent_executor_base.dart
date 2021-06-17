@@ -4,6 +4,7 @@ import 'dart:isolate';
 
 typedef Runnable = void Function();
 
+/// 还可以支持stop方法来停止所有的worker
 class Executor {
   late ReceivePort receivePort;
 

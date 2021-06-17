@@ -4,7 +4,7 @@ import 'dart:isolate';
 import 'package:concurrent_executor/concurrent_executor.dart';
 
 void main(List<String> args) async {
-  var executor = await Executor.createExecutor(3);
+  var executor = await Executor.createExecutor(2);
 
   // 同一个文件里如果直接发送函数是可以的，但是用包的形式就不行了。。
   executor.execute(fuck);
