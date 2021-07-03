@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
 
-typedef Runnable = void Function();
+typedef Callable<R> = R Function();
 
 /// 还可以支持stop方法来停止所有的worker
 class Executor {
@@ -19,7 +19,7 @@ class Executor {
   Map<String, _Worker> isolates = {};
 
   // 在dart里list，queue等只有length没有capacity；
-  Queue<Runnable> tasks = Queue.from([]);
+  Queue<Callable> tasks = Queue.from([]);
 
   // 先主要用到coreIsolateSize和tasks
   // 创建Executor后必须await先执行init；
@@ -30,11 +30,12 @@ class Executor {
     var executor = Executor._(coreSize);
     executor.receivePort = ReceivePort();
     var bstream = executor.receivePort.asBroadcastStream();
-    
+
     // 一次性先创建coreSize个核心线程
     for (var i = 0; i < executor.coreIsolateSize; i++) {
       var debugName = executor._isolateDebugName;
-      var isolate = await Isolate.spawn(_workerHandler, executor.receivePort.sendPort,
+      var isolate = await Isolate.spawn(
+          _workerHandler, executor.receivePort.sendPort,
           debugName: debugName);
       await for (var msg in bstream) {
         if (msg is SendPort) {
@@ -69,7 +70,7 @@ class Executor {
   }
 
   // 先只能runnable，且不返还Future，task必须是有静态生命周期的
-  void execute(Runnable task) {
+  void execute(Callable task) {
     var availableWorker =
         isolates.values.where((isolate) => isolate.enabled && isolate.free);
     if (availableWorker.isEmpty) {
@@ -114,7 +115,7 @@ class _Worker {
 }
 
 class _TaskWrapper {
-  Runnable task;
+  Callable task;
 
   _TaskWrapper(this.task);
 }
