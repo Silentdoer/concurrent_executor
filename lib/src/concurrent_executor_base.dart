@@ -19,7 +19,7 @@ class Executor {
   Map<String, _Worker> isolates = {};
 
   // 在dart里list，queue等只有length没有capacity；
-  Queue<Callable> tasks = Queue.from([]);
+  Queue<Callable<dynamic>> tasks = Queue.from([]);
 
   // 先主要用到coreIsolateSize和tasks
   // 创建Executor后必须await先执行init；
@@ -70,7 +70,7 @@ class Executor {
   }
 
   // 先只能runnable，且不返还Future，task必须是有静态生命周期的
-  void execute(Callable task) {
+  void execute(Callable<void> task) {
     var availableWorker =
         isolates.values.where((isolate) => isolate.enabled && isolate.free);
     if (availableWorker.isEmpty) {
@@ -114,8 +114,8 @@ class _Worker {
   _Worker(this.enabled, this.isolate, this.sendPort, this.free);
 }
 
-class _TaskWrapper {
-  Callable task;
+class _TaskWrapper<R> {
+  Callable<R> task;
 
   _TaskWrapper(this.task);
 }
