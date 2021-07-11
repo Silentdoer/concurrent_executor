@@ -4,6 +4,8 @@ import 'dart:isolate';
 
 typedef Callable<R> = R Function();
 
+typedef Runnable = void Function();
+
 /// 还可以支持stop方法来停止所有的worker
 class Executor {
   late ReceivePort receivePort;
@@ -19,7 +21,8 @@ class Executor {
   Map<String, _Worker> isolates = {};
 
   // 在dart里list，queue等只有length没有capacity；
-  Queue<Callable<dynamic>> tasks = Queue.from([]);
+  // 这里只能用dynamic，用T的话必须把T声明在Executor上，这相当于是告诉外部Executor只能接收某种返回类型的task，显然不行
+  Queue<_TaskWrapper<dynamic>> tasks = Queue.from([]);
 
   // 先主要用到coreIsolateSize和tasks
   // 创建Executor后必须await先执行init；
@@ -49,37 +52,89 @@ class Executor {
     return executor;
   }
 
+  void shutdown() {
+    isolates.forEach((_, worker) {
+      worker.enabled = false;
+      worker.isolate.kill();
+    });
+    print('''executor has shutdown, but these tasks is not executed: $tasks''');
+    receivePort.close();
+  }
+
   void _workerMessageProcessor(dynamic message) {
     if (message is _Message) {
-      // 这个isolate里是发了IsolateSendPort表示肯定是没有task执行了【可以考虑这个free由参数里提供】
-      var isolate = isolates[message.workerDebugName] as _Worker;
-      // 先只支持empty的请求
+      // TODO 这里也可以用_EmptyMessage, _ompleteMessage来实现
       if (message.type == _MessageType.empty) {
+        // 这个isolate里是发了IsolateSendPort表示肯定是没有task执行了【可以考虑这个free由参数里提供】
+        var worker = isolates[message.workerDebugName] as _Worker;
         // 由于数据不能跨isolate，因此只能发消息让master来置为free
-        isolate.free = true;
+        worker.free = true;
+        // 可能此时已经shutdown了
+        if (!worker.enabled) {
+          return;
+        }
+        // 判断tasks不为空，后面的是否free其实都可以不判断，没有空也能发task给它【TODO 后续优化】
+        if (tasks.isNotEmpty && worker.free) {
+          // 找出第一个没有处于就绪状态下的task
+          var taskWrapper = tasks.firstWhere((task) => !task.ready);
+          if (taskWrapper.task.runtimeType == Runnable) {
+            // 返回值是void的不需要等待worker发送complete消息，因此这里直接移除即可；
+            tasks.remove(taskWrapper);
+          }
+          worker.sendPort.send([taskWrapper]);
+          taskWrapper.ready = true;
+          worker.free = false;
+          return;
+        }
+      } else if (message.type == _MessageType.complete) {
+        var state = message.state as _CompleteMessageState;
+        var taskWrapper =
+            tasks.firstWhere((element) => element.taskId == state.taskId);
+        taskWrapper.completer!.complete(state.result);
+      } else if (message.type == _MessageType.pull) {
+        // ignored
+      } else {
+        throw ArgumentError('can not send this type message from worker.');
       }
-      // 判断tasks不为空，后面的是否free其实都可以不判断，没有空也能发task给它【TODO 后续优化】
-      if (tasks.isNotEmpty && isolate.free) {
-        isolate.sendPort.send([_TaskWrapper(tasks.removeFirst())]);
-        isolate.free = false;
-        return;
-      }
-    } else {
-      throw ArgumentError('can not send this type message from sub isolate.');
     }
   }
 
-  // 先只能runnable，且不返还Future，task必须是有静态生命周期的
-  void execute(Callable<void> task) {
+  /// FutureOr<R>是union类型，它既是R也可以是Future<R>类型
+  FutureOr<R> submit<R>(Callable<FutureOr<R>> task) {
     var availableWorker =
         isolates.values.where((isolate) => isolate.enabled && isolate.free);
-    if (availableWorker.isEmpty) {
-      tasks.addLast(task);
+    // 需要思考R是Future类型时怎么办【用FutureOr<R>应该解决了】
+    // 不够后续优化可以考虑将返回值是Future（一般方法内部有io等待）的尽量发到同一个worker里，可以进行集中优化（目前都先await）
+    _TaskWrapper taskWrapper;
+    if (task.runtimeType == Runnable) {
+      taskWrapper = _TaskWrapper.justTask(task);
+      if (availableWorker.isNotEmpty) {
+        // 此时存在已经启用且空闲的，用符合条件的第一个即可
+        var freeIsolate = availableWorker.first;
+        // 这里只能用组合模式，否则只能多余的发completer给worker【组合模式即将wrapperBase和completer来共同组合成wrapper】
+        // 当然，这里也可以通过冗余指针的方式实现，即创建一个baseWrapper对象，但是属性用wrapper的
+        freeIsolate.sendPort.send([taskWrapper]);
+        freeIsolate.free = false;
+      } else {
+        tasks.addLast(taskWrapper);
+      }
+      // flag 我真机智啊
+      return null as FutureOr<R>;
     } else {
-      // 此时存在已经启用且空闲的，用符合条件的第一个即可
-      var freeIsolate = availableWorker.first;
-      freeIsolate.sendPort.send([_TaskWrapper(task)]);
-      freeIsolate.free = false;
+      var completer = Completer<R>();
+      taskWrapper = _TaskWrapper(task, completer);
+      taskWrapper.taskId = int.parse(taskWrapper.taskId.toString());
+      // 由于isolate执行完毕后需要告诉master，因此没有执行完毕之前都不能从master里清理
+      tasks.addLast(taskWrapper);
+      if (availableWorker.isNotEmpty) {
+        // 此时存在已经启用且空闲的，用符合条件的第一个即可
+        var freeIsolate = availableWorker.first;
+        var tmp =
+            _TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId);
+        freeIsolate.sendPort.send([tmp]);
+        freeIsolate.free = false;
+      }
+      return completer.future;
     }
   }
 }
@@ -89,12 +144,15 @@ enum _MessageType {
   empty,
   // 请求拉取task，可能还没有空，但是快空了
   pull,
+  complete,
 }
 
 class _Message {
   _MessageType type;
 
   String workerDebugName;
+
+  dynamic state;
 
   _Message(this.type, this.workerDebugName);
 }
@@ -117,7 +175,28 @@ class _Worker {
 class _TaskWrapper<R> {
   Callable<R> task;
 
-  _TaskWrapper(this.task);
+  Completer<R>? completer;
+
+  int? taskId;
+
+  /// 是否已经处于就绪状态【即已经发给了worker将执行】
+  bool ready = false;
+
+  static int _taskIdSeed = 1;
+
+  /// 这里taskId不能用task的hashCode，因为多个task的方法对象可能是同一个，因此会重复
+  _TaskWrapper(this.task, this.completer) : taskId = _TaskWrapper._taskIdSeed++;
+
+  _TaskWrapper.nonCompleter(this.task, this.taskId);
+
+  _TaskWrapper.justTask(this.task);
+}
+
+class _CompleteMessageState {
+  int taskId;
+  var result;
+
+  _CompleteMessageState(this.taskId, this.result);
 }
 
 void _workerHandler(SendPort sendPort) async {
@@ -130,8 +209,23 @@ void _workerHandler(SendPort sendPort) async {
   while (true) {
     if (tasks.isNotEmpty) {
       // execute【在一个文件里是可以直接发送函数的，但是用了包不知道为什么就不行了】
-      var taskModel = tasks.removeFirst();
-      taskModel.task();
+      var taskWrapper = tasks.removeFirst();
+      if (taskWrapper.task.runtimeType == Runnable) {
+        taskWrapper.task();
+        continue;
+      }
+      var result = taskWrapper.task();
+      var resReal;
+      // 在这里Future是Type而非Class？
+      if (result is Future) {
+        resReal = await result;
+      } else {
+        resReal = result;
+      }
+
+      // 执行完毕要给master发消息，让master对此task进行complete【在isolate里complete不会在master里生效】
+      sendPort.send(_Message(_MessageType.complete, currentDebugName)
+        ..state = _CompleteMessageState(taskWrapper.taskId!, resReal));
     } else {
       // tasks里没有task任务了，请求isolate master分配一些，告诉master是哪个worker要task【甚至还可以支持要多少。。】
       sendPort.send(_Message(_MessageType.empty, currentDebugName));

@@ -5,16 +5,19 @@ A concurrent executor library for Dart developers.
 A simple usage example:
 
 ```dart
+import 'dart:io';
+import 'dart:isolate';
+
 import 'package:concurrent_executor/concurrent_executor.dart';
 
 void main() async {
   var executor = await Executor.createExecutor(2);
 
-  executor.execute(foo);
+  executor.submit(foo);
 
-  executor.execute(foo);
+  executor.submit(foo);
 
-  executor.execute(foo);
+  executor.submit(foo);
 }
 
 void foo() {
