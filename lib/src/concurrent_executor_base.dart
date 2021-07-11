@@ -74,7 +74,9 @@ class Executor {
           return;
         }
         // 判断tasks不为空，后面的是否free其实都可以不判断，没有空也能发task给它【TODO 后续优化】
-        if (tasks.isNotEmpty && worker.free) {
+        if (tasks.isNotEmpty &&
+            tasks.where((task) => !task.ready).isNotEmpty &&
+            worker.free) {
           // 找出第一个没有处于就绪状态下的task
           var taskWrapper = tasks.firstWhere((task) => !task.ready);
           if (taskWrapper.task.runtimeType == Runnable) {
@@ -91,6 +93,7 @@ class Executor {
         var taskWrapper =
             tasks.firstWhere((element) => element.taskId == state.taskId);
         taskWrapper.completer!.complete(state.result);
+        tasks.remove(taskWrapper);
       } else if (message.type == _MessageType.pull) {
         // ignored
       } else {
@@ -114,6 +117,7 @@ class Executor {
         // 这里只能用组合模式，否则只能多余的发completer给worker【组合模式即将wrapperBase和completer来共同组合成wrapper】
         // 当然，这里也可以通过冗余指针的方式实现，即创建一个baseWrapper对象，但是属性用wrapper的
         freeIsolate.sendPort.send([taskWrapper]);
+        taskWrapper.ready = true;
         freeIsolate.free = false;
       } else {
         tasks.addLast(taskWrapper);
@@ -123,15 +127,14 @@ class Executor {
     } else {
       var completer = Completer<R>();
       taskWrapper = _TaskWrapper(task, completer);
-      taskWrapper.taskId = int.parse(taskWrapper.taskId.toString());
       // 由于isolate执行完毕后需要告诉master，因此没有执行完毕之前都不能从master里清理
       tasks.addLast(taskWrapper);
       if (availableWorker.isNotEmpty) {
         // 此时存在已经启用且空闲的，用符合条件的第一个即可
         var freeIsolate = availableWorker.first;
-        var tmp =
-            _TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId);
-        freeIsolate.sendPort.send([tmp]);
+        freeIsolate.sendPort.send(
+            [_TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId)]);
+        taskWrapper.ready = true;
         freeIsolate.free = false;
       }
       return completer.future;
@@ -218,6 +221,7 @@ void _workerHandler(SendPort sendPort) async {
       var resReal;
       // 在这里Future是Type而非Class？
       if (result is Future) {
+        print('### result is future');
         resReal = await result;
       } else {
         resReal = result;
