@@ -83,7 +83,10 @@ class Executor {
             // 返回值是void的不需要等待worker发送complete消息，因此这里直接移除即可；
             tasks.remove(taskWrapper);
           }
-          worker.sendPort.send([taskWrapper]);
+          // FLAG 似乎不能发Completer对象，否则可能有问题
+          worker.sendPort.send([
+            _TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId)
+          ]);
           taskWrapper.ready = true;
           worker.free = false;
           return;
@@ -221,7 +224,6 @@ void _workerHandler(SendPort sendPort) async {
       var resReal;
       // 在这里Future是Type而非Class？
       if (result is Future) {
-        print('### result is future');
         resReal = await result;
       } else {
         resReal = result;

@@ -34,14 +34,51 @@ void main(List<String> args) async {
   print(Uk.mm++);
 
   var recei = ReceivePort();
-  Isolate.spawn(handler, recei.sendPort);
-  await for (var msg in recei) {
-    msg();
+  var bstream = recei.asBroadcastStream();
+  await Isolate.spawn(handler, recei.sendPort);
+  late SendPort sendPort;
+  await for (var msg in bstream) {
+    if (msg is SendPort) {
+      sendPort = msg;
+      break;
+    }
+  }
+  print('start listen');
+  bstream.listen(listenMet);
+  sendPort.send(uu);
+  print(await kks());
+  print('end');
+}
+
+Completer<int>? completer;
+
+Future<int> kks() {
+  completer = Completer<int>();
+  return completer!.future;
+}
+
+void listenMet(var msg) {
+  completer!.complete(msg);
+}
+
+void handler(SendPort sendPort) async {
+  ReceivePort rec = ReceivePort();
+
+  sendPort.send(rec.sendPort);
+  var stream = rec.asBroadcastStream();
+  await for (var msg in stream) {
+    var result = msg();
+    sendPort.send(899);
   }
 }
 
-void handler(SendPort sendPort) {
-  sendPort.send(uu);
+typedef Callable<R> = R Function();
+
+class TaskWrapper<R> {
+  Callable<R> task;
+  Completer? completer;
+
+  TaskWrapper(this.task);
 }
 
 void kk() {}
