@@ -4,7 +4,7 @@ import 'dart:isolate';
 
 typedef Callable<R> = R Function();
 
-typedef Runnable = void Function();
+typedef CallableWithState<R> = R Function(Object?);
 
 /// 还可以支持stop方法来停止所有的worker
 class Executor {
@@ -22,7 +22,8 @@ class Executor {
 
   // 在dart里list，queue等只有length没有capacity；
   // 这里只能用dynamic，用T的话必须把T声明在Executor上，这相当于是告诉外部Executor只能接收某种返回类型的task，显然不行
-  Queue<_TaskWrapper<dynamic>> tasks = Queue.from([]);
+  // dynamic is _TaskWrapper or _TaskWithStateWrapper
+  Queue<dynamic> tasks = Queue.from([]);
 
   // 先主要用到coreIsolateSize和tasks
   // 创建Executor后必须await先执行init；
@@ -55,6 +56,7 @@ class Executor {
   void shutdown() {
     isolates.forEach((_, worker) {
       worker.enabled = false;
+      // fixme
       worker.isolate.kill();
     });
     print('''executor has shutdown, but these tasks is not executed: $tasks''');
@@ -79,14 +81,20 @@ class Executor {
             worker.free) {
           // 找出第一个没有处于就绪状态下的task
           var taskWrapper = tasks.firstWhere((task) => !task.ready);
-          if (taskWrapper.task.runtimeType == Runnable) {
+          if (taskWrapper.isReturnVoid) {
             // 返回值是void的不需要等待worker发送complete消息，因此这里直接移除即可；
             tasks.remove(taskWrapper);
           }
-          // FLAG 似乎不能发Completer对象，否则可能有问题
-          worker.sendPort.send([
-            _TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId)
-          ]);
+          if (taskWrapper is _TaskWithStateWrapper) {
+            // FLAG 似乎不能发Completer对象，否则可能有问题
+            worker.sendPort.send([taskWrapper.toNonCompleter()]);
+          } else {
+            // FLAG 似乎不能发Completer对象，否则可能有问题
+            worker.sendPort.send([
+              _TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId, taskWrapper.isReturnVoid)
+            ]);
+          }
+          
           taskWrapper.ready = true;
           worker.free = false;
           return;
@@ -112,8 +120,8 @@ class Executor {
     // 需要思考R是Future类型时怎么办【用FutureOr<R>应该解决了】
     // 不够后续优化可以考虑将返回值是Future（一般方法内部有io等待）的尽量发到同一个worker里，可以进行集中优化（目前都先await）
     _TaskWrapper taskWrapper;
-    if (task.runtimeType == Runnable) {
-      taskWrapper = _TaskWrapper.justTask(task);
+    if (isVoidType<R>()) {
+      taskWrapper = _TaskWrapper.justTask(task)..isReturnVoid = true;
       if (availableWorker.isNotEmpty) {
         // 此时存在已经启用且空闲的，用符合条件的第一个即可
         var freeIsolate = availableWorker.first;
@@ -136,7 +144,49 @@ class Executor {
         // 此时存在已经启用且空闲的，用符合条件的第一个即可
         var freeIsolate = availableWorker.first;
         freeIsolate.sendPort.send(
-            [_TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId)]);
+            [_TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId, taskWrapper.isReturnVoid)]);
+        taskWrapper.ready = true;
+        freeIsolate.free = false;
+      }
+      return completer.future;
+    }
+  }
+
+  /// FutureOr<R>是union类型，它既是R也可以是Future<R>类型
+  /// fuck，似乎很难做到state自定义类型。。
+  FutureOr<R> submitWithState<R>(CallableWithState<FutureOr<R>> task, Object? state) {
+    var availableWorker =
+        isolates.values.where((isolate) => isolate.enabled && isolate.free);
+    // 需要思考R是Future类型时怎么办【用FutureOr<R>应该解决了】
+    // 不够后续优化可以考虑将返回值是Future（一般方法内部有io等待）的尽量发到同一个worker里，可以进行集中优化（目前都先await）
+    // 必须直接用这个，因为worker里只能判断出非泛型部分，泛型部分没法取出来，所以保存的时候干脆就保存为dynamic
+    _TaskWithStateWrapper taskWrapper;
+    if (isVoidType<R>()) {
+      taskWrapper =  _TaskWithStateWrapper.justTask(task, state)..isReturnVoid = true;
+      if (availableWorker.isNotEmpty) {
+        // 此时存在已经启用且空闲的，用符合条件的第一个即可
+        var freeIsolate = availableWorker.first;
+        // 这里只能用组合模式，否则只能多余的发completer给worker【组合模式即将wrapperBase和completer来共同组合成wrapper】
+        // 当然，这里也可以通过冗余指针的方式实现，即创建一个baseWrapper对象，但是属性用wrapper的
+        freeIsolate.sendPort.send([taskWrapper]);
+        taskWrapper.ready = true;
+        freeIsolate.free = false;
+      } else {
+        tasks.addLast(taskWrapper);
+      }
+      // flag 我真机智啊
+      return null as FutureOr<R>;
+    } else {
+      var completer = Completer<R>();
+      taskWrapper = _TaskWithStateWrapper(task, state, completer);
+      print(taskWrapper.runtimeType);
+      // 由于isolate执行完毕后需要告诉master，因此没有执行完毕之前都不能从master里清理
+      tasks.addLast(taskWrapper);
+      if (availableWorker.isNotEmpty) {
+        // 此时存在已经启用且空闲的，用符合条件的第一个即可
+        var freeIsolate = availableWorker.first;
+
+        freeIsolate.sendPort.send([taskWrapper.toNonCompleter()]);
         taskWrapper.ready = true;
         freeIsolate.free = false;
       }
@@ -178,8 +228,10 @@ class _Worker {
   _Worker(this.enabled, this.isolate, this.sendPort, this.free);
 }
 
+int _taskIdSeed = 1;
+
 class _TaskWrapper<R> {
-  Callable<R> task;
+  Callable<FutureOr<R>> task;
 
   Completer<R>? completer;
 
@@ -188,14 +240,44 @@ class _TaskWrapper<R> {
   /// 是否已经处于就绪状态【即已经发给了worker将执行】
   bool ready = false;
 
-  static int _taskIdSeed = 1;
+  bool isReturnVoid = false;
 
   /// 这里taskId不能用task的hashCode，因为多个task的方法对象可能是同一个，因此会重复
-  _TaskWrapper(this.task, this.completer) : taskId = _TaskWrapper._taskIdSeed++;
+  _TaskWrapper(this.task, this.completer) : taskId = _taskIdSeed++;
 
-  _TaskWrapper.nonCompleter(this.task, this.taskId);
+  _TaskWrapper.nonCompleter(this.task, this.taskId, this.isReturnVoid);
 
   _TaskWrapper.justTask(this.task);
+}
+
+/// 因为要判断是否是_TaskWithStateWrapper，这种情况下虽然task有S和R的类型，但是没法取出来
+/// 所以这里只能是把task当成CallableWithState<dynamic, dynamic>来取出来，因此保存的时候就不该用
+/// 到泛型来保存【数据除外，数据的dynamic可以和其他类型直接转换，但是function不一样，会报：
+/// type '(String) => int' is not a subtype of type '(dynamic) => dynamic'
+class _TaskWithStateWrapper<R> {
+  CallableWithState<FutureOr<R>> task;
+
+  Object? state;
+
+  Completer<R>? completer;
+
+  int? taskId;
+
+  /// 是否已经处于就绪状态【即已经发给了worker将执行】
+  bool ready = false;
+
+  bool isReturnVoid = false;
+
+  /// 这里taskId不能用task的hashCode，因为多个task的方法对象可能是同一个，因此会重复
+  _TaskWithStateWrapper(this.task, this.state, this.completer) : taskId = _taskIdSeed++;
+
+  _TaskWithStateWrapper._nonCompleter(this.task, this.state, this.taskId, this.isReturnVoid);
+
+  _TaskWithStateWrapper.justTask(this.task, this.state);
+
+  _TaskWithStateWrapper<R> toNonCompleter() {
+    return _TaskWithStateWrapper._nonCompleter(task, state, taskId, isReturnVoid);
+  }
 }
 
 class _CompleteMessageState {
@@ -206,7 +288,7 @@ class _CompleteMessageState {
 }
 
 void _workerHandler(SendPort sendPort) async {
-  var tasks = Queue<_TaskWrapper>.from([]);
+  var tasks = Queue<dynamic>.from([]);
   var currentDebugName = Isolate.current.debugName as String;
   var receivePort = ReceivePort(currentDebugName);
   // 往master isolate里发送用于和worker通信的sendPort
@@ -216,11 +298,31 @@ void _workerHandler(SendPort sendPort) async {
     if (tasks.isNotEmpty) {
       // execute【在一个文件里是可以直接发送函数的，但是用了包不知道为什么就不行了】
       var taskWrapper = tasks.removeFirst();
-      if (taskWrapper.task.runtimeType == Runnable) {
-        taskWrapper.task();
+      if (taskWrapper.isReturnVoid) {
+        if (taskWrapper is _TaskWithStateWrapper) {
+          taskWrapper.task(taskWrapper.state);
+        } else {
+          taskWrapper.task();
+        }
         continue;
       }
-      var result = taskWrapper.task();
+      var result;
+      if (taskWrapper is _TaskWithStateWrapper) {
+        // 还是报这个错误，所以我这里要考虑到一点，就是一个task发送到其他地方去执行的时候
+        // 已经不会存它的类型了，因此只能以dynamic的方式去执行，，，，很蛋疼啊；
+        // 所以存的时候就应该将task存为dynamic的类型，fuck
+        //result = Function.apply(taskWrapper.task, taskWrapper.state);
+        // 用这个会报：type '(String) => int' is not a subtype of type '(dynamic) => dynamic'
+        //print('bbbb');
+        // 这里是taskWrapper.task的时候就已经报错了，因为taskWrapper是dynamic和dynamic，所以这里
+        // 将task进行了强制转换为了(dynamic) => dynamic而报错的。
+        // TODO 所以taskWrapper的泛型不应该和Callable的泛型对应起来；
+        //print(taskWrapper.task.runtimeType);
+        //print(taskWrapper.state.runtimeType);
+        result = taskWrapper.task(taskWrapper.state);
+      } else {
+        result = taskWrapper.task();
+      }
       var resReal;
       // 在这里Future是Type而非Class？
       if (result is Future) {
@@ -240,5 +342,15 @@ void _workerHandler(SendPort sendPort) async {
         break;
       }
     }
+  }
+}
+
+bool isVoidType<T>() {
+  var list = <T>[];
+  var s = <void>[];
+  if (list.runtimeType == s.runtimeType) {
+    return true;
+  } else {
+    return false;
   }
 }
