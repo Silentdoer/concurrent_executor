@@ -18,3 +18,7 @@
 ## 0.5.0
 
 - allow state with a custom type.
+
+## 0.5.1
+
+- fix wrapper declare

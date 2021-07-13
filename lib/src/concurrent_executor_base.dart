@@ -253,11 +253,12 @@ class _TaskWrapper<R> {
 /// 所以这里只能是把task当成CallableWithState<dynamic, dynamic>来取出来，因此保存的时候就不该用
 /// 到泛型来保存【数据除外，数据的dynamic可以和其他类型直接转换，但是function不一样，会报：
 /// type '(String) => int' is not a subtype of type '(dynamic) => dynamic'
-class _TaskWithStateWrapper<R> {
+class _TaskWithStateWrapper<S, R> {
   // 这里不能存S，否则报上面的错误
+  // Function 是所有Function对象的超级（类似是dynamic一样）
   Function task;
 
-  Object? state;
+  S state;
 
   Completer<R>? completer;
 
@@ -275,7 +276,7 @@ class _TaskWithStateWrapper<R> {
 
   _TaskWithStateWrapper.justTask(this.task, this.state);
 
-  _TaskWithStateWrapper<R> toNonCompleter() {
+  _TaskWithStateWrapper<S, R> toNonCompleter() {
     return _TaskWithStateWrapper._nonCompleter(task, state, taskId, isReturnVoid);
   }
 }
