@@ -35,6 +35,12 @@ void main() async {
   var res444 = executor.submitWithState(foo4, '司法局');
   print(await res444);
 
+  var res5 = executor.submitWithState(foo5, 99);
+  print(await res5);
+
+  var res6 = executor.submitWithState(foo6, '发动机可怜');
+  print(await res6);
+
   // region pause
   var receivePort = ReceivePort();
   await Isolate.spawn(pause, receivePort.sendPort);
@@ -64,7 +70,19 @@ Future<int> foo3() async {
 int foo4(Object? stat) {
   print('${Isolate.current.debugName}-aaa-${stat}');
   sleep(Duration(seconds: 1));
-  return 3;
+  return 344;
+}
+
+int foo5(int stat) {
+  print('${Isolate.current.debugName}-aaa-${stat}');
+  sleep(Duration(seconds: 1));
+  return stat;
+}
+
+int foo6(String stat) {
+  print('${Isolate.current.debugName}-aaa-${stat}');
+  sleep(Duration(seconds: 1));
+  return 6663;
 }
 
 void pause(SendPort message) {

@@ -5,6 +5,11 @@ import 'dart:collection';
 void main(List<String> args) {
   var ss = [TaskWrapper.name(sss, 'sss')];
   //Callable sssb = sss;
+  // Function就类似dynamic，只不过是局限于Function类型的dynamic
+  Function su = sss;
+  su('ooo');
+  su = () =>8;
+  print(su());
 }
 
 int sss(String s) {

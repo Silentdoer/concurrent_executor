@@ -14,3 +14,7 @@
 ## 0.4.0
 
 - support task state
+
+## 0.5.0
+
+- allow state with a custom type.

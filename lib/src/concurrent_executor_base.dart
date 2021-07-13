@@ -4,7 +4,7 @@ import 'dart:isolate';
 
 typedef Callable<R> = R Function();
 
-typedef CallableWithState<R> = R Function(Object?);
+typedef CallableWithState<S, R> = R Function(S);
 
 /// 还可以支持stop方法来停止所有的worker
 class Executor {
@@ -154,7 +154,7 @@ class Executor {
 
   /// FutureOr<R>是union类型，它既是R也可以是Future<R>类型
   /// fuck，似乎很难做到state自定义类型。。
-  FutureOr<R> submitWithState<R>(CallableWithState<FutureOr<R>> task, Object? state) {
+  FutureOr<R> submitWithState<S, R>(CallableWithState<S, FutureOr<R>> task, S state) {
     var availableWorker =
         isolates.values.where((isolate) => isolate.enabled && isolate.free);
     // 需要思考R是Future类型时怎么办【用FutureOr<R>应该解决了】
@@ -179,7 +179,6 @@ class Executor {
     } else {
       var completer = Completer<R>();
       taskWrapper = _TaskWithStateWrapper(task, state, completer);
-      print(taskWrapper.runtimeType);
       // 由于isolate执行完毕后需要告诉master，因此没有执行完毕之前都不能从master里清理
       tasks.addLast(taskWrapper);
       if (availableWorker.isNotEmpty) {
@@ -255,7 +254,8 @@ class _TaskWrapper<R> {
 /// 到泛型来保存【数据除外，数据的dynamic可以和其他类型直接转换，但是function不一样，会报：
 /// type '(String) => int' is not a subtype of type '(dynamic) => dynamic'
 class _TaskWithStateWrapper<R> {
-  CallableWithState<FutureOr<R>> task;
+  // 这里不能存S，否则报上面的错误
+  Function task;
 
   Object? state;
 
