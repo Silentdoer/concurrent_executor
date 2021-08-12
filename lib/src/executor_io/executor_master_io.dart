@@ -1,16 +1,28 @@
-library executor;
-
 import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
 
-import 'package:concurrent_executor/src/executor.dart';
-import 'package:concurrent_executor/src/executor_io/worker_wrapper.dart';
-import 'package:concurrent_executor/src/basic_component.dart';
-import 'package:concurrent_executor/src/utils/generic_util.dart';
+import 'package:concurrent_executor/src/concurrent_executor_base.dart';
+import 'package:concurrent_executor/src/executor_io/worker.dart';
+import 'package:concurrent_executor/src/message.dart';
+import 'package:concurrent_executor/src/task/concurrent_task.dart';
+import 'package:concurrent_executor/src/task/task_status.dart';
 import 'package:concurrent_executor/src/utils/id_util.dart';
+import 'package:logging/logging.dart';
 
 class ExecutorMaster extends Executor {
+  static final log = buildLogger();
+
+  static Logger buildLogger() {
+    hierarchicalLoggingEnabled = true;
+    var log = Logger('Executor_io');
+    log.level = Level.INFO;
+    log.onRecord.listen((record) {
+      print(
+          '[${record.level.name}] ${record.time} [Isolate:${Isolate.current.debugName}] [Logger:${record.loggerName}] -> ${record.message}');
+    });
+    return log;
+  }
 
   bool _inited = false;
 
@@ -19,19 +31,17 @@ class ExecutorMaster extends Executor {
 
   /// executor master isolate message receiver
   late ReceivePort _receivePort;
-  
+
   /// Prevent users from creating manually
   ExecutorMaster.noManually_(this._coreWorkerSize);
 
   String get _nextWorkerDebugName => 'executor_worker_${isolateIncrementNum()}';
 
-  final Map<String, WorkerWrapper> _workers = {};
+  // debugName - Isolate worker
+  final Map<String, Worker> _workers = {};
 
-  // 在dart里list，queue等只有length没有capacity；
-  // 这里只能用dynamic，用T的话必须把T声明在Executor上，这相当于是告诉外部Executor只能接收某种返回类型的task，显然不行
-  // dynamic is _TaskWrapper or _TaskWithStateWrapper
-  Queue<dynamic> tasks = Queue.from([]);
-  
+  Queue<TaskWrapper<dynamic>> tasks = Queue.from([]);
+
   @override
   Future<void> init() async {
     if (_inited) {
@@ -40,139 +50,89 @@ class ExecutorMaster extends Executor {
     _receivePort = ReceivePort();
     var bstream = _receivePort.asBroadcastStream();
 
-    // 一次性先创建coreSize个核心线程
+    // create and initialize all workers, sync
     for (var i = 0; i < _coreWorkerSize; i++) {
-      /* var isolate = await Isolate.spawn(
-          _workerHandler, _receivePort.sendPort,
-          debugName: debugName); */
       var debugName = _nextWorkerDebugName;
-      var worker = WorkerWrapper(debugName);
+      var worker = Worker(debugName);
       await worker.init(_receivePort.sendPort, bstream);
       _workers[debugName] = worker;
-      /* await for (var msg in bstream) {
-        if (msg is SendPort) {
-          worker.endInit(msg);
-          break;
-        }
-      } */
     }
-    // 等所有worker都初始化完毕后listen
-    bstream.listen(_workerMessageProcessor);
+    // all workers are initialized
+    bstream.listen(_messageProcessor);
     _inited = true;
   }
 
-  void _workerMessageProcessor(dynamic message) {
-    if (message is Message) {
-      // TODO 这里也可以用_EmptyMessage, _ompleteMessage来实现
-      if (message.type == MessageType.empty) {
-        // 这个isolate里是发了IsolateSendPort表示肯定是没有task执行了【可以考虑这个free由参数里提供】
-        var worker = _workers[message.workerDebugName] as WorkerWrapper;
-        // 由于数据不能跨isolate，因此只能发消息让master来置为free
-        worker.idle = true;
-        // 可能此时已经shutdown了
+  /// process message for master
+  void _messageProcessor(dynamic message) {
+    if (message is WorkerMessage) {
+      if (message.type == MessageType.idle ||
+          message.type == MessageType.pull) {
+        var worker = _workers[message.workerDebugName] as Worker;
+        worker.idle = MessageType.idle == message.type ? true : false;
+        // executor has been closed.
         if (!worker.available) {
+          log.warning(
+              'executor has been closed, but received message ${message.type} from worker ${message.workerDebugName}');
           return;
         }
-        // 判断tasks不为空，后面的是否free其实都可以不判断，没有空也能发task给它【TODO 后续优化】
-        if (tasks.isNotEmpty &&
-            tasks.where((task) => !task.ready).isNotEmpty &&
-            worker.idle) {
-          // 找出第一个没有处于就绪状态下的task
-          var taskWrapper = tasks.firstWhere((task) => !task.ready);
-          if (taskWrapper.isReturnVoid) {
-            // 返回值是void的不需要等待worker发送complete消息，因此这里直接移除即可；
-            tasks.remove(taskWrapper);
-          }
-          if (taskWrapper is TaskWithStateWrapper) {
-            // FLAG 似乎不能发Completer对象，否则可能有问题
-            worker.sendPort.send([taskWrapper.toNonCompleter()]);
-          } else {
-            // FLAG 似乎不能发Completer对象，否则可能有问题
-            worker.sendPort.send([
-              TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId, taskWrapper.isReturnVoid)
-            ]);
-          }
-          
-          taskWrapper.ready = true;
+        if (tasks.where((task) => task.status == TaskStatus.idle).isNotEmpty) {
+          // find out first idle taskWrapper
+          var taskWrapper =
+              tasks.firstWhere((task) => task.status == TaskStatus.idle);
+          worker.sendPort.send([taskWrapper.toSend()]);
+
+          taskWrapper.status = TaskStatus.ready;
           worker.idle = false;
-          return;
         }
-      } else if (message.type == MessageType.complete) {
+      } else if (message.type == MessageType.success) {
+        // task finished success
         var state = message.state as CompleteMessageState;
         var taskWrapper =
-            tasks.firstWhere((element) => element.taskId == state.taskId);
-        taskWrapper.completer!.complete(state.result);
+            tasks.firstWhere((task) => task.taskId == state.taskId);
+        taskWrapper.status = TaskStatus.success;
+        taskWrapper.completer.complete(state.result);
         tasks.remove(taskWrapper);
-      } else if (message.type == MessageType.pull) {
-        // ignored
+      } else if (message.type == MessageType.error) {
+        // task finished failure
+        var state = message.state as ErrorMessageState;
+        var taskWrapper =
+            tasks.firstWhere((task) => task.taskId == state.taskId);
+        taskWrapper.status = TaskStatus.error;
+        taskWrapper.completer.completeError(
+            state.error, StackTrace.fromString(state.stackTrace));
+        tasks.remove(taskWrapper);
       } else {
-        throw ArgumentError('can not send this type message from worker.');
+        throw ArgumentError('unknown message type ${message.type}');
       }
     }
   }
 
   @override
-  FutureOr<void> shutdown() {
+  FutureOr<void> close() {
     // TODO: implement shutdown
-    //throw UnimplementedError();
     _workers.forEach((_, worker) {
       worker.available = false;
       // fixme
-      worker.shutdown();
+      worker.close();
     });
     print('''executor has shutdown, but these tasks 还没有收到完成消息: $tasks''');
     _receivePort.close();
   }
 
   @override
-  Future<R> submit<R>(Callable<FutureOr<R>> task) {
+  Future<R> submit<R>(ConcurrentTask<FutureOr<R>> task) {
+    // find out first available and idle worker
     var availableWorker =
-        _workers.values.where((isolate) => isolate.available && isolate.idle);
-    // 需要思考R是Future类型时怎么办【用FutureOr<R>应该解决了】
-    // 不够后续优化可以考虑将返回值是Future（一般方法内部有io等待）的尽量发到同一个worker里，可以进行集中优化（目前都先await）
-    
-      var completer = Completer<R>();
-      var taskWrapper = TaskWrapper(task, completer);
-      /* if (voidType == R) {
-        taskWrapper.isReturnVoid = true;
-      } */
-      // 由于isolate执行完毕后需要告诉master，因此没有执行完毕之前都不能从master里清理
-      tasks.addLast(taskWrapper);
-      if (availableWorker.isNotEmpty) {
-        // 此时存在已经启用且空闲的，用符合条件的第一个即可
-        var idleIsolate = availableWorker.first;
-        idleIsolate.sendPort.send(
-            [TaskWrapper.nonCompleter(taskWrapper.task, taskWrapper.taskId, taskWrapper.isReturnVoid)]);
-        taskWrapper.ready = true;
-        idleIsolate.idle = false;
-      }
-      return completer.future;
-    
-  }
-
-  /// FutureOr<R>是union类型，它既是R也可以是Future<R>类型
-  /// fuck，似乎很难做到state自定义类型。。
-  @override
-  Future<R> submitWithState<S, R>(CallableWithState<S, FutureOr<R>> task, S state) {
-    var availableWorker =
-        _workers.values.where((isolate) => isolate.available && isolate.idle);
-    
-      var completer = Completer<R>();
-      var taskWrapper = TaskWithStateWrapper(task, state, completer);
-      /* if (voidType == R) {
-        taskWrapper.isReturnVoid = true;
-      } */
-      // 由于isolate执行完毕后需要告诉master，因此没有执行完毕之前都不能从master里清理
-      tasks.addLast(taskWrapper);
-      if (availableWorker.isNotEmpty) {
-        // 此时存在已经启用且空闲的，用符合条件的第一个即可
-        var idleIsolate = availableWorker.first;
-
-        idleIsolate.sendPort.send([taskWrapper.toNonCompleter()]);
-        taskWrapper.ready = true;
-        idleIsolate.idle = false;
-      }
-      return completer.future;
-    
+        _workers.values.where((worker) => worker.available && worker.idle);
+    var completer = Completer<R>();
+    var taskWrapper = TaskWrapper(task, completer);
+    tasks.addLast(taskWrapper);
+    if (availableWorker.isNotEmpty) {
+      var idleWorker = availableWorker.first;
+      idleWorker.sendPort.send([taskWrapper.toSend()]);
+      taskWrapper.status = TaskStatus.ready;
+      idleWorker.idle = false;
+    }
+    return completer.future;
   }
 }

@@ -1,45 +1,129 @@
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:concurrent_executor/src/executor.dart';
+import 'package:concurrent_executor/concurrent_executor.dart';
+import 'package:pedantic/pedantic.dart';
 
-void main(List<String> args) async {
-  var executor = await Executor.createExecutor(5);
+void main() async {
+  var executor = await Executor.createExecutor(2);
 
-  // 同一个文件里如果直接发送函数是可以的，但是用包的形式就不行了。。
-  executor.submit(fuck);
+  var foo = Foo();
+  unawaited(executor.submit(foo).then((value) => value, onError: (e, s) {
+    print(e);
+    print(s);
+  }));
 
-  executor.submit(fuck);
+  var res = executor.submit(foo);
+  print(res);
+  var foo2 = Foo2();
+  var res222 = executor.submit(foo2);
+  print(await res222);
 
-  executor.submit(fuck);
+  var res2 = executor.submit(foo2);
+  print(res2);
 
-  executor.submit(fuck);
+  var res22 = executor.submit(foo2);
+  print(await res22);
 
-  executor.submit(fuck);
+  var foo3 = Foo3();
+  var res3 = executor.submit(foo3);
+  print(await res3);
 
-  executor.submit(fuck);
+  var res33 = executor.submit(foo3);
+  print(res33);
 
-  //sleep(Duration(seconds: 2));
+  var res333 = executor.submit(foo3);
+  print(await res333);
+
+  var foo4 = Foo4();
+  foo4.stat = 'aaaaccc';
+  var res44 = executor.submit(foo4);
+  print(res44);
+
+  var foo44 = Foo4();
+  foo44.stat = 'vvvveee';
+  var res444 = executor.submit(foo44);
+  print(await res444);
+
+  var foo5 = Foo5();
+  foo5.stat = 99;
+  var res5 = executor.submit(foo5);
+  print(await res5);
+
+  var foo6 = Foo6();
+  foo6.stat = 'kkkkttt';
+  var res6 = executor.submit(foo6);
+  print(await res6);
+
+  // region pause
   var receivePort = ReceivePort();
-  await Isolate.spawn(mm, receivePort.sendPort);
-
-  await for (var msg in receivePort) {
+  await Isolate.spawn(pause, receivePort.sendPort);
+  await for (var _ in receivePort) {
     break;
   }
-  print('await ok');
-  await executor.submit(fuck);
+  // endregion
 
-  /// shutdown分级，立刻【丢弃task】，等待task【不允许再submit】
-  executor.shutdown();
+  executor.close();
 }
 
-void mm(SendPort message) {
+class Foo extends ConcurrentTask<void> {
+  @override
+  void run() {
+    print('${Isolate.current.debugName}-aaa');
+    sleep(Duration(seconds: 1));
+  }
+}
+
+class Foo2 extends ConcurrentTask<int> {
+  @override
+  int run() {
+    print('${Isolate.current.debugName}-aaa');
+    sleep(Duration(seconds: 1));
+    return 3;
+  }
+}
+
+class Foo3 extends ConcurrentTask<Future<int>> {
+  @override
+  Future<int> run() async {
+    return await Future.value(9);
+  }
+}
+
+class Foo4 extends ConcurrentTask<int> {
+  Object? stat = 888;
+
+  @override
+  int run() {
+    print('${Isolate.current.debugName}-aaa-$stat');
+    sleep(Duration(seconds: 1));
+    return 344;
+  }
+}
+
+class Foo5 extends ConcurrentTask<int> {
+  var stat = 85288;
+
+  @override
+  int run() {
+    print('${Isolate.current.debugName}-aaa-$stat');
+    sleep(Duration(seconds: 1));
+    return stat;
+  }
+}
+
+class Foo6 extends ConcurrentTask<int> {
+  String stat = '';
+
+  @override
+  int run() {
+    print('${Isolate.current.debugName}-aaa-$stat');
+    sleep(Duration(seconds: 1));
+    return 6663;
+  }
+}
+
+void pause(SendPort message) {
   sleep(Duration(seconds: 3));
-  print('message');
-  message.send(88);
-}
-
-void fuck() {
-  print('${Isolate.current.debugName}-aaa');
-  sleep(Duration(seconds: 1));
+  message.send('close');
 }
