@@ -68,19 +68,19 @@ Future<int> foo3() async {
 }
 
 int foo4(Object? stat) {
-  print('${Isolate.current.debugName}-aaa-${stat}');
+  print('${Isolate.current.debugName}-aaa-$stat');
   sleep(Duration(seconds: 1));
   return 344;
 }
 
 int foo5(int stat) {
-  print('${Isolate.current.debugName}-aaa-${stat}');
+  print('${Isolate.current.debugName}-aaa-$stat');
   sleep(Duration(seconds: 1));
   return stat;
 }
 
 int foo6(String stat) {
-  print('${Isolate.current.debugName}-aaa-${stat}');
+  print('${Isolate.current.debugName}-aaa-$stat');
   sleep(Duration(seconds: 1));
   return 6663;
 }

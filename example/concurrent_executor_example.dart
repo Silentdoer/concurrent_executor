@@ -1,10 +1,10 @@
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:concurrent_executor/concurrent_executor.dart';
+import 'package:concurrent_executor/src/executor.dart';
 
 void main(List<String> args) async {
-  var executor = await Executor.createExecutor(2);
+  var executor = await Executor.createExecutor(5);
 
   // 同一个文件里如果直接发送函数是可以的，但是用包的形式就不行了。。
   executor.submit(fuck);
@@ -27,8 +27,9 @@ void main(List<String> args) async {
     break;
   }
   print('await ok');
-  executor.submit(fuck);
+  await executor.submit(fuck);
 
+  /// shutdown分级，立刻【丢弃task】，等待task【不允许再submit】
   executor.shutdown();
 }
 
