@@ -7,10 +7,13 @@ import 'package:meta/meta.dart';
 
 abstract class Executor {
   @protected
+  ExecutorStatus status = ExecutorStatus.created;
+
+  @protected
   Future<void> init();
 
   /// need user close executor manually
-  FutureOr<void> close();
+  FutureOr<void> close([CloseLevel level = CloseLevel.immediately]);
 
   /// create an executor instance, coreWorkerSize is the number of isolates executing the task
   static Future<Executor> createExecutor([int coreWorkerSize = 1]) async {
@@ -21,4 +24,17 @@ abstract class Executor {
 
   /// submit a concurrent task, you need to implements ConcurrentTask<R> for your task
   Future<R> submit<R>(ConcurrentTask<FutureOr<R>> task);
+}
+
+enum ExecutorStatus {
+  created,
+  running,
+  closing,
+  closed,
+}
+
+enum CloseLevel {
+  immediately,
+  afterRunningFinished,
+  afterAllFinished,
 }

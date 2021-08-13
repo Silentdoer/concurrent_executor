@@ -1,7 +1,5 @@
 import 'dart:async';
-
 import 'dart:collection';
-
 import 'dart:isolate';
 
 void main(List<String> args) async {
@@ -17,7 +15,6 @@ void main(List<String> args) async {
   //ss<void>();
 
   Queue<int> que = Queue.from([1, 2, 3]);
-  // first是只要没有remove掉，那么first永远是第一个元素
   print(que.first);
   print(que.first);
   print(que.removeFirst());
@@ -84,7 +81,7 @@ class TaskWrapper<R> {
 void kk() {}
 
 int uu() {
-  print('基斯里夫看见了');
+  print('ffff');
   return 9;
 }
 

@@ -50,11 +50,6 @@ void mm(SendPort message) {
   message.send(88);
 }
 
-void fuck() {
-  print('${Isolate.current.debugName}-aaa');
-  sleep(Duration(seconds: 1));
-}
-
 class TaskImpl extends ConcurrentTask<int> {
   String sss = '334';
 
