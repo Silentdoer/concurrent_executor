@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
 
+import 'package:concurrent_executor/concurrent_executor.dart';
 import 'package:concurrent_executor/src/message.dart';
 import 'package:concurrent_executor/src/task/concurrent_task.dart';
 import 'package:logging/logging.dart';
@@ -87,7 +88,7 @@ class Worker {
   }
 
   /// TODO
-  FutureOr<bool> close() {
+  FutureOr<bool> close([CloseLevel level = CloseLevel.immediately]) {
     _isolate.kill();
     return true;
   }

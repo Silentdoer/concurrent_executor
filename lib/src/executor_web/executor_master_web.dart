@@ -37,6 +37,7 @@ class ExecutorMaster extends Executor {
     status = ExecutorStatus.running;
   }
 
+  // TODO
   @override
   FutureOr<void> close([CloseLevel level = CloseLevel.immediately]) {
     if (status == ExecutorStatus.created) {
@@ -63,10 +64,30 @@ class ExecutorMaster extends Executor {
     var completer = Completer<R>();
     var taskWrapper = TaskWrapper(task, completer);
     _tasks.addLast(taskWrapper);
+    // No task is currently preparing to execute
+    if (_tasks.where((element) => element.status == TaskStatus.ready).isEmpty) {
+      _readyTask(taskWrapper).whenComplete(() {
+        _triggerNextTaskExecution();
+      });
+    }
+    return completer.future;
+  }
+
+  void _triggerNextTaskExecution() {
+    if (_tasks
+        .where((element) => element.status == TaskStatus.idle)
+        .isNotEmpty) {
+      var taskWrapper =
+          _tasks.firstWhere((element) => element.status == TaskStatus.idle);
+      _readyTask(taskWrapper).whenComplete(_triggerNextTaskExecution);
+    }
+  }
+
+  Future<Null> _readyTask(TaskWrapper<dynamic> taskWrapper) {
     taskWrapper.status = TaskStatus.ready;
-    Future.microtask(() async {
+    return Future.microtask(() async {
       try {
-        var result = task.run();
+        var result = taskWrapper.task.run();
         // In order to be consistent with executor_io
         if (result is Future<dynamic>) {
           result = await result;
@@ -80,6 +101,5 @@ class ExecutorMaster extends Executor {
         _tasks.remove(taskWrapper);
       }
     });
-    return completer.future;
   }
 }

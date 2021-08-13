@@ -18,12 +18,14 @@ class ErrorMessageState extends WorkerMessageState {
 }
 
 enum MessageType {
+  /// worker is idle
   idle,
   pull,
   success,
   error,
 }
 
+/// message from worker
 class WorkerMessage {
   MessageType type;
 
