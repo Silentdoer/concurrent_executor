@@ -4,10 +4,10 @@ abstract class WorkerMessageState {
   WorkerMessageState(this.taskId);
 }
 
-class CompleteMessageState extends WorkerMessageState {
+class SuccessMessageState extends WorkerMessageState {
   var result;
 
-  CompleteMessageState(int taskId, this.result) : super(taskId);
+  SuccessMessageState(int taskId, this.result) : super(taskId);
 }
 
 class ErrorMessageState extends WorkerMessageState {

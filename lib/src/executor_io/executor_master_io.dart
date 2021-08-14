@@ -24,7 +24,7 @@ class ExecutorMaster extends Executor {
     return log;
   }
 
-  CloseLevel _closeLevel = CloseLevel.immediately;
+  CloseLevel _closeLevel = CloseLevel.afterRunningFinished;
 
   /// Number of resident isolates, It does not take effect for web
   final int _coreWorkerSize;
@@ -38,7 +38,7 @@ class ExecutorMaster extends Executor {
   String get _nextWorkerDebugName => 'executor_worker_${isolateIncrementNum()}';
 
   // debugName - Isolate worker
-  final Map<String, Worker> _workers = {};
+  final Map<String, MasterWorker> _workers = {};
 
   final Queue<TaskWrapper<dynamic>> _tasks = Queue.from([]);
 
@@ -57,8 +57,9 @@ class ExecutorMaster extends Executor {
     // create and initialize all workers, sync
     for (var i = 0; i < _coreWorkerSize; i++) {
       var debugName = _nextWorkerDebugName;
-      var worker = Worker(debugName);
+      var worker = MasterWorker(debugName);
       await worker.init(_receivePort.sendPort, bstream);
+      log.info('worker $debugName has been initialized.');
       _workers[debugName] = worker;
     }
     // all workers are initialized
@@ -71,7 +72,7 @@ class ExecutorMaster extends Executor {
     if (message is WorkerMessage) {
       if (message.type == MessageType.idle ||
           message.type == MessageType.pull) {
-        var worker = _workers[message.workerDebugName] as Worker;
+        var worker = _workers[message.workerDebugName] as MasterWorker;
         worker.idle = MessageType.idle == message.type ? true : false;
         // executor has been closed.
         if (!worker.available) {
@@ -90,7 +91,7 @@ class ExecutorMaster extends Executor {
         }
       } else if (message.type == MessageType.success) {
         // task finished success
-        var state = message.state as CompleteMessageState;
+        var state = message.state as SuccessMessageState;
         var taskWrapper =
             _tasks.firstWhere((task) => task.taskId == state.taskId);
         taskWrapper.status = TaskStatus.success;
@@ -118,7 +119,7 @@ class ExecutorMaster extends Executor {
   ///
   /// 注意，如果submit提交了两个一模一样的对象要warning一下比较好，毕竟state可能造成脏数据
   @override
-  FutureOr<void> close([CloseLevel level = CloseLevel.immediately]) {
+  FutureOr<void> close([CloseLevel level = CloseLevel.afterRunningFinished]) {
     if (status == ExecutorStatus.created) {
       throw StateError('executor has not initialized.');
     } else if (status == ExecutorStatus.closing) {

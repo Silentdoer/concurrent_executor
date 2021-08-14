@@ -7,38 +7,23 @@ import 'package:concurrent_executor/src/message.dart';
 import 'package:concurrent_executor/src/task/concurrent_task.dart';
 import 'package:logging/logging.dart';
 
-class Worker {
-  static final log = buildLogger();
-
-  static Logger buildLogger() {
-    hierarchicalLoggingEnabled = true;
-    var log = Logger('Worker');
-    log.level = Level.INFO;
-    log.onRecord.listen((record) {
-      print(
-          '[${record.level.name}] ${record.time} [Isolate:${Isolate.current.debugName}] [Logger:${record.loggerName}] -> ${record.message}');
-    });
-    return log;
-  }
-
+class MasterWorker {
   /// such as worker not initialized, or already closed
   bool available = false;
 
   /// whether the worker is currently idle
   bool idle = true;
 
-  late Isolate _isolate;
-
-  final String _debugName;
+  final String debugName;
 
   /// The master isolate sends message to the worker through this sendPort
   late SendPort sendPort;
 
-  Worker(this._debugName);
+  MasterWorker(this.debugName);
 
   FutureOr<void> init(SendPort masterSendPort, Stream bstream) async {
-    _isolate = await Isolate.spawn(_workerHandler, masterSendPort,
-        debugName: _debugName);
+    await Isolate.spawn(_IsolateWorker._workerHandler, masterSendPort,
+        debugName: debugName);
     await for (var msg in bstream) {
       if (msg is SendPort) {
         sendPort = msg;
@@ -46,7 +31,35 @@ class Worker {
         break;
       }
     }
-    log.info('worker: $_debugName has been initialized.');
+  }
+
+  /// TODO， send msg to worker
+  FutureOr<bool> close([CloseLevel level = CloseLevel.afterRunningFinished]) {
+    switch (level) {
+      case CloseLevel.immediately:
+        break;
+      case CloseLevel.afterRunningFinished:
+        break;
+      case CloseLevel.afterAllFinished:
+        break;
+    }
+
+    return true;
+  }
+}
+
+class _IsolateWorker {
+  static Logger log = buildLogger();
+
+  static Logger buildLogger() {
+    hierarchicalLoggingEnabled = true;
+    var log = Logger('MasterWorker');
+    log.level = Level.INFO;
+    log.onRecord.listen((record) {
+      print(
+          '[${record.level.name}] ${record.time} [Isolate:${Isolate.current.debugName}] [Logger:${record.loggerName}] -> ${record.message}');
+    });
+    return log;
   }
 
   static void _workerHandler(SendPort masterSendPort) async {
@@ -65,7 +78,7 @@ class Worker {
           }
           masterSendPort.send(
               WorkerMessage(MessageType.success, currentDebugName)
-                ..state = CompleteMessageState(taskWrapper.taskId, result));
+                ..state = SuccessMessageState(taskWrapper.taskId, result));
         } catch (e, s) {
           /* log.warning('task: ${taskWrapper.taskId} has an exception: $e'); */
           masterSendPort.send(WorkerMessage(MessageType.error, currentDebugName)
@@ -86,10 +99,11 @@ class Worker {
       }
     }
   }
+}
 
-  /// TODO
-  FutureOr<bool> close([CloseLevel level = CloseLevel.immediately]) {
-    _isolate.kill();
-    return true;
-  }
+enum IsolateWorkerStatus {
+  created,
+  running,
+  closing,
+  closed,
 }
