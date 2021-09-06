@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
 
-import 'package:concurrent_executor/concurrent_executor.dart';
 import 'package:concurrent_executor/src/message.dart';
 import 'package:concurrent_executor/src/task/concurrent_task.dart';
 import 'package:logging/logging.dart';
@@ -33,23 +32,16 @@ class MasterWorker {
     }
   }
 
-  /// TODO， send msg to worker
-  FutureOr<bool> close([CloseLevel level = CloseLevel.afterRunningFinished]) {
-    switch (level) {
-      case CloseLevel.immediately:
-        break;
-      case CloseLevel.afterRunningFinished:
-        break;
-      case CloseLevel.afterAllFinished:
-        break;
-    }
-
+  /// ignore close level, controlled by executor master
+  FutureOr<bool> close(
+      /* [CloseLevel level = CloseLevel.afterRunningFinished] */) {
+    sendPort.send(CloseMessage());
     return true;
   }
 }
 
 class _IsolateWorker {
-  static Logger log = buildLogger();
+  static final Logger _log = buildLogger();
 
   static Logger buildLogger() {
     hierarchicalLoggingEnabled = true;
@@ -62,15 +54,22 @@ class _IsolateWorker {
     return log;
   }
 
+  static var _avaiable = true;
+
+  static var _taskWaiter = Completer<List<TaskWrapperBase<dynamic>>>();
+
+  static late final ReceivePort _receivePort;
+
+  static late final _tasks = Queue<TaskWrapperBase<dynamic>>.from([]);
+
   static void _workerHandler(SendPort masterSendPort) async {
-    var tasks = Queue<TaskWrapperBase<dynamic>>.from([]);
     var currentDebugName = Isolate.current.debugName as String;
-    var receivePort = ReceivePort(currentDebugName);
-    masterSendPort.send(receivePort.sendPort);
-    var bstream = receivePort.asBroadcastStream();
-    while (true) {
-      if (tasks.isNotEmpty) {
-        var taskWrapper = tasks.removeFirst();
+    _receivePort = ReceivePort(currentDebugName);
+    masterSendPort.send(_receivePort.sendPort);
+    _receivePort.listen(_messageProcessor);
+    while (_avaiable) {
+      if (_tasks.isNotEmpty) {
+        var taskWrapper = _tasks.removeFirst();
         try {
           var result = taskWrapper.task.run();
           if (result is Future<dynamic>) {
@@ -87,23 +86,26 @@ class _IsolateWorker {
       } else {
         // worker's tasks is empty, pull some from master
         masterSendPort.send(WorkerMessage(MessageType.idle, currentDebugName));
-        await for (var message in bstream) {
-          if (message is List<TaskWrapperBase<dynamic>>) {
-            tasks.addAll(message);
-          } else {
-            log.warning(
-                'unknown message type: ${message.runtimeType}, message: $message');
-          }
-          break;
-        }
+        var taskList = await _taskWaiter.future;
+        // reset for next use
+        _taskWaiter = Completer<List<TaskWrapperBase<dynamic>>>();
+        _tasks.addAll(taskList);
       }
     }
   }
-}
 
-enum IsolateWorkerStatus {
-  created,
-  running,
-  closing,
-  closed,
+  static void _messageProcessor(dynamic message) {
+    if (message is List<TaskWrapperBase<dynamic>>) {
+      _taskWaiter.complete(message);
+    } else if (message is CloseMessage) {
+      // controlled by executor master
+      _avaiable = false;
+      _receivePort.close();
+      //_taskWaiter.complete([]);
+      Isolate.current.kill();
+    } else {
+      _log.warning(
+          'unknown message type: ${message.runtimeType}, message: $message');
+    }
+  }
 }

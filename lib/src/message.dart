@@ -25,6 +25,12 @@ enum MessageType {
   error,
 }
 
+enum CloseLevel {
+  immediately,
+  afterRunningFinished,
+  afterAllFinished,
+}
+
 /// message from worker
 class WorkerMessage {
   MessageType type;
@@ -34,4 +40,8 @@ class WorkerMessage {
   WorkerMessageState? state;
 
   WorkerMessage(this.type, this.workerDebugName);
+}
+
+class CloseMessage {
+  CloseLevel level = CloseLevel.afterRunningFinished;
 }

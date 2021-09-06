@@ -5,7 +5,7 @@ import 'package:concurrent_executor/concurrent_executor.dart';
 import 'package:concurrent_executor/src/task/concurrent_task.dart';
 
 void main(List<String> args) async {
-  var executor = await Executor.createExecutor(2);
+  var executor = await Executor.createExecutor(3);
 
   var ts = TaskImpl();
   executor.submit(ts);

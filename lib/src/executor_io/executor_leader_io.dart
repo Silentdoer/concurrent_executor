@@ -10,8 +10,8 @@ import 'package:concurrent_executor/src/task/task_status.dart';
 import 'package:concurrent_executor/src/utils/id_util.dart';
 import 'package:logging/logging.dart';
 
-class ExecutorMaster extends Executor {
-  static final log = buildLogger();
+class ExecutorLeader extends Executor {
+  static final _log = buildLogger();
 
   static Logger buildLogger() {
     hierarchicalLoggingEnabled = true;
@@ -26,6 +26,8 @@ class ExecutorMaster extends Executor {
 
   CloseLevel _closeLevel = CloseLevel.afterRunningFinished;
 
+  Completer<void>? _closeCompleter;
+
   /// Number of resident isolates, It does not take effect for web
   final int _coreWorkerSize;
 
@@ -33,7 +35,7 @@ class ExecutorMaster extends Executor {
   late ReceivePort _receivePort;
 
   /// Prevent users from creating manually
-  ExecutorMaster.noManually_(this._coreWorkerSize);
+  ExecutorLeader.noManually_(this._coreWorkerSize);
 
   String get _nextWorkerDebugName => 'executor_worker_${isolateIncrementNum()}';
 
@@ -59,7 +61,7 @@ class ExecutorMaster extends Executor {
       var debugName = _nextWorkerDebugName;
       var worker = MasterWorker(debugName);
       await worker.init(_receivePort.sendPort, bstream);
-      log.info('worker $debugName has been initialized.');
+      _log.info('$debugName has been initialized.');
       _workers[debugName] = worker;
     }
     // all workers are initialized
@@ -76,7 +78,7 @@ class ExecutorMaster extends Executor {
         worker.idle = MessageType.idle == message.type ? true : false;
         // executor has been closed.
         if (!worker.available) {
-          log.warning(
+          _log.warning(
               'executor has been closed, but received message ${message.type} from worker ${message.workerDebugName}');
           return;
         }
@@ -127,16 +129,47 @@ class ExecutorMaster extends Executor {
     } else if (status == ExecutorStatus.closed) {
       throw StateError('executor has been closed.');
     }
+    _closeLevel = level;
     status = ExecutorStatus.closing;
+    switch (level) {
+      case CloseLevel.immediately:
+        status = ExecutorStatus.closed;
+        return null;
+      case CloseLevel.afterRunningFinished:
+        if (_tasks
+            .where((element) => element.status == TaskStatus.ready)
+            .isEmpty) {
+          status = ExecutorStatus.closed;
+          return null;
+        }
+        break;
+      case CloseLevel.afterAllFinished:
+        if (_tasks.isEmpty) {
+          status = ExecutorStatus.closed;
+          return null;
+        }
+        break;
+    }
+    _closeCompleter = Completer();
+    return _closeCompleter!.future;
+
+
+    /* if (status == ExecutorStatus.created) {
+      throw StateError('executor has not initialized.');
+    } else if (status == ExecutorStatus.closing) {
+      throw StateError('executor is closing.');
+    } else if (status == ExecutorStatus.closed) {
+      throw StateError('executor has been closed.');
+    }
+    status = ExecutorStatus.closing; */
     // TODO: implement shutdown
-    _workers.forEach((_, worker) {
+    /* _workers.forEach((_, worker) {
       worker.available = false;
       // fixme
       worker.close();
-    });
-    print('''executor has been closed, but these tasks 还没有收到完成消息: $_tasks''');
-    _receivePort.close();
-    status = ExecutorStatus.closed;
+    }); */
+    //_receivePort.close();
+    //status = ExecutorStatus.closed;
   }
 
   @override
@@ -147,7 +180,7 @@ class ExecutorMaster extends Executor {
       throw StateError('executor is closing.');
     }
     if (_tasks.any((taskWrapper) => taskWrapper.task == task)) {
-      log.warning(
+      _log.warning(
           'the task is already in the queue to be executed on the executor');
     }
     // find out first available and idle worker

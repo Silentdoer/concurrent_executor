@@ -2,12 +2,13 @@ import 'dart:async';
 import 'dart:collection';
 
 import 'package:concurrent_executor/src/concurrent_executor_base.dart';
+import 'package:concurrent_executor/src/message.dart' show CloseLevel;
 import 'package:concurrent_executor/src/task/concurrent_task.dart';
 import 'package:concurrent_executor/src/task/task_status.dart';
 import 'package:logging/logging.dart';
 
-class ExecutorMaster extends Executor {
-  static final log = buildLogger();
+class ExecutorLeader extends Executor {
+  static final _log = buildLogger();
 
   static Logger buildLogger() {
     hierarchicalLoggingEnabled = true;
@@ -20,14 +21,14 @@ class ExecutorMaster extends Executor {
     return log;
   }
 
-  CloseLevel _closeLevel = CloseLevel.afterRunningFinished;
+  var _closeLevel = CloseLevel.afterRunningFinished;
 
   Completer<void>? _closeCompleter;
 
   final Queue<TaskWrapper<dynamic>> _tasks = Queue.from([]);
 
   /// Prevent users from creating manually
-  ExecutorMaster.noManually_(int coreWorkerSize /*ignored*/);
+  ExecutorLeader.noManually_(int coreWorkerSize /*ignored*/);
 
   @override
   Future<void> init() async {
@@ -41,7 +42,6 @@ class ExecutorMaster extends Executor {
     status = ExecutorStatus.running;
   }
 
-  // TODO closed
   @override
   FutureOr<void> close([CloseLevel level = CloseLevel.afterRunningFinished]) {
     if (status == ExecutorStatus.created) {
@@ -85,7 +85,7 @@ class ExecutorMaster extends Executor {
     }
 
     if (_tasks.any((taskWrapper) => taskWrapper.task == task)) {
-      log.warning(
+      _log.warning(
           'the task is already in the queue to be executed on the executor');
     }
 
@@ -106,10 +106,12 @@ class ExecutorMaster extends Executor {
     if (status != ExecutorStatus.running) {
       if (_closeLevel != CloseLevel.afterAllFinished) {
         status = ExecutorStatus.closed;
+        _closeCompleter!.complete(null);
         return;
       } else if (_tasks.isEmpty) {
         // closing and CloseLevel.afterAllFinished, check tasks is empty
         status = ExecutorStatus.closed;
+        _closeCompleter!.complete(null);
         return;
       }
     }
