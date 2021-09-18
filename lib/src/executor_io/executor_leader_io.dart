@@ -40,7 +40,7 @@ class ExecutorLeader extends Executor {
   String get _nextWorkerDebugName => 'executor_worker_${isolateIncrementNum()}';
 
   // debugName - Isolate worker
-  final Map<String, MasterWorker> _workers = {};
+  final Map<String, ExecutorWorker> _workers = {};
 
   final Queue<TaskWrapper<dynamic>> _tasks = Queue.from([]);
 
@@ -59,7 +59,7 @@ class ExecutorLeader extends Executor {
     // create and initialize all workers, sync
     for (var i = 0; i < _coreWorkerSize; i++) {
       var debugName = _nextWorkerDebugName;
-      var worker = MasterWorker(debugName);
+      var worker = ExecutorWorker(debugName);
       await worker.init(_receivePort.sendPort, bstream);
       _log.info('$debugName has been initialized.');
       _workers[debugName] = worker;
@@ -74,7 +74,7 @@ class ExecutorLeader extends Executor {
     if (message is WorkerMessage) {
       if (message.type == MessageType.idle ||
           message.type == MessageType.pull) {
-        var worker = _workers[message.workerDebugName] as MasterWorker;
+        var worker = _workers[message.workerDebugName] as ExecutorWorker;
         worker.idle = MessageType.idle == message.type ? true : false;
         // executor has been closed.
         if (!worker.available) {
@@ -120,6 +120,17 @@ class ExecutorLeader extends Executor {
   /// 3.等待所有的包括master的执行完毕【不接受新的submit】
   ///
   /// 注意，如果submit提交了两个一模一样的对象要warning一下比较好，毕竟state可能造成脏数据
+  /// 
+  /// TODO 这里的逻辑是，全部由executor来控制是immediately还是afterRunningFinished还是afterAllFinished
+  /// 实现方式是通过executor的task状态是idle则说明还没有添加到isolate里执行，ready则是已经添加到isolate待执行；
+  /// 因此如果是immediately（三者都不允许submit），则不需要管task的状态，直接发送让isolate立刻停止即可；
+  /// 如果是afterRunningFinished，则当ready为空【isolate请求获取task来执行不予理会且发送close】时为closed【触发
+  /// 时机就是isolate请求获取task来执行的时机即可】
+  /// 如果是afterAllFinished，则等待ready是空，idle也是空的时候即为closed【也是在isolate请求获取task来执行的时候触发，
+  /// 不过这里允许给task执行，直到发现没有了idle task的时候发送close；注意最终executor的closed要求判断所有的worker都close了
+  /// （available为false）】
+  /// //_receivePort.close();
+  ///status = ExecutorStatus.closed; 这两个最后记得关闭一下
   @override
   FutureOr<void> close([CloseLevel level = CloseLevel.afterRunningFinished]) {
     if (status == ExecutorStatus.created) {
@@ -133,6 +144,11 @@ class ExecutorLeader extends Executor {
     status = ExecutorStatus.closing;
     switch (level) {
       case CloseLevel.immediately:
+        _workers.values.forEach((worker) {
+          worker.available = false;
+          worker.close();
+        });
+        _workers.clear();
         status = ExecutorStatus.closed;
         return null;
       case CloseLevel.afterRunningFinished:
@@ -152,24 +168,6 @@ class ExecutorLeader extends Executor {
     }
     _closeCompleter = Completer();
     return _closeCompleter!.future;
-
-
-    /* if (status == ExecutorStatus.created) {
-      throw StateError('executor has not initialized.');
-    } else if (status == ExecutorStatus.closing) {
-      throw StateError('executor is closing.');
-    } else if (status == ExecutorStatus.closed) {
-      throw StateError('executor has been closed.');
-    }
-    status = ExecutorStatus.closing; */
-    // TODO: implement shutdown
-    /* _workers.forEach((_, worker) {
-      worker.available = false;
-      // fixme
-      worker.close();
-    }); */
-    //_receivePort.close();
-    //status = ExecutorStatus.closed;
   }
 
   @override
@@ -178,7 +176,10 @@ class ExecutorLeader extends Executor {
       throw StateError('executor has been closed.');
     } else if (status == ExecutorStatus.closing) {
       throw StateError('executor is closing.');
+    } else if (status == ExecutorStatus.created) {
+      throw StateError('executor is not initialized.');
     }
+    
     if (_tasks.any((taskWrapper) => taskWrapper.task == task)) {
       _log.warning(
           'the task is already in the queue to be executed on the executor');

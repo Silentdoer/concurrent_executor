@@ -82,6 +82,8 @@ class ExecutorLeader extends Executor {
       throw StateError('executor has been closed.');
     } else if (status == ExecutorStatus.closing) {
       throw StateError('executor is closing.');
+    } else if (status == ExecutorStatus.created) {
+      throw StateError('executor is not initialized.');
     }
 
     if (_tasks.any((taskWrapper) => taskWrapper.task == task)) {

@@ -6,7 +6,7 @@ import 'package:concurrent_executor/src/message.dart';
 import 'package:concurrent_executor/src/task/concurrent_task.dart';
 import 'package:logging/logging.dart';
 
-class MasterWorker {
+class ExecutorWorker {
   /// such as worker not initialized, or already closed
   bool available = false;
 
@@ -18,7 +18,7 @@ class MasterWorker {
   /// The master isolate sends message to the worker through this sendPort
   late SendPort sendPort;
 
-  MasterWorker(this.debugName);
+  ExecutorWorker(this.debugName);
 
   FutureOr<void> init(SendPort masterSendPort, Stream bstream) async {
     await Isolate.spawn(_IsolateWorker._workerHandler, masterSendPort,
@@ -33,10 +33,10 @@ class MasterWorker {
   }
 
   /// ignore close level, controlled by executor master
-  FutureOr<bool> close(
+  FutureOr<void> close(
       /* [CloseLevel level = CloseLevel.afterRunningFinished] */) {
     sendPort.send(CloseMessage());
-    return true;
+    return null;
   }
 }
 
@@ -45,7 +45,7 @@ class _IsolateWorker {
 
   static Logger buildLogger() {
     hierarchicalLoggingEnabled = true;
-    var log = Logger('MasterWorker');
+    var log = Logger('IsolateWorker');
     log.level = Level.INFO;
     log.onRecord.listen((record) {
       print(
