@@ -1,5 +1,5 @@
 enum TaskStatus {
-  idle,
+  created,
 
   /// sent to worker, can not cancel
   ready,

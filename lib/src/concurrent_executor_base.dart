@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:concurrent_executor/src/executor_web/executor_leader_web.dart'
-    if (dart.library.io) 'package:concurrent_executor/src/executor_io/executor_master_io.dart';
+    if (dart.library.io) 'package:concurrent_executor/src/executor_io/executor_leader_io.dart';
 import 'package:concurrent_executor/src/message.dart' show CloseLevel;
 import 'package:concurrent_executor/src/task/concurrent_task.dart';
 import 'package:meta/meta.dart';

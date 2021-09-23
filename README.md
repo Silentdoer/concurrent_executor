@@ -134,7 +134,6 @@ void pause(SendPort message) {
   sleep(Duration(seconds: 3));
   message.send('close');
 }
-
 ```
 
 ## Features and bugs

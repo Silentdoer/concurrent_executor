@@ -5,11 +5,11 @@
 
 ## 0.2.0
 
-- 修改创建executor的方式，优化isolate之间消息通讯
+- Modify the method of creating executors to optimize message communication between isolates
 
 ## 0.3.0
 
-- 优化Executor可以submit task后返回FutureOr<R>，如果R是void类型则直接返回null，如果task的响应值是Future，则Future会在worker里执行完毕后返回给用户
+- Optimized Executor can return FutureOr<R> after submitting the task. If R is void, it will directly return null. If the response value of the task is Future, the Future will be returned to the user after execution in the worker.
 
 ## 0.4.0
 
@@ -22,3 +22,7 @@
 ## 0.5.1
 
 - fix wrapper declare
+
+## 0.7.0
+
+- update english comment, finished executor close method.

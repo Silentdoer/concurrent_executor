@@ -72,20 +72,45 @@ class ExecutorLeader extends Executor {
   /// process message for master
   void _messageProcessor(dynamic message) {
     if (message is WorkerMessage) {
-      if (message.type == MessageType.idle ||
-          message.type == MessageType.pull) {
+      if (message.type == MessageType.idle) {
         var worker = _workers[message.workerDebugName] as ExecutorWorker;
-        worker.idle = MessageType.idle == message.type ? true : false;
+        worker.idle = true;
         // executor has been closed.
         if (!worker.available) {
           _log.warning(
               'executor has been closed, but received message ${message.type} from worker ${message.workerDebugName}');
           return;
         }
-        if (_tasks.where((task) => task.status == TaskStatus.idle).isNotEmpty) {
+        if (status == ExecutorStatus.closing) {
+          if (_closeLevel == CloseLevel.afterRunningFinished) {
+            worker.available = false;
+            worker.close();
+            // all worker has been closed.
+            if (!_workers.values.any((w) => w.available)) {
+              assert (_tasks.isEmpty);
+              _receivePort.close();
+              status = ExecutorStatus.closed;
+              _closeCompleter!.complete();
+            }
+            return;
+          } else if (_closeLevel == CloseLevel.afterAllFinished) {
+            // all finished task(success, failured) will removed from _tasks
+            if (_tasks.isEmpty) {
+              _workers.values.forEach((worker) {
+                worker.available = false;
+                worker.close();
+              });
+              _receivePort.close();
+              status = ExecutorStatus.closed;
+              _closeCompleter!.complete();
+              return;
+            }
+          }
+        }
+        if (_tasks.where((task) => task.status == TaskStatus.created).isNotEmpty) {
           // find out first idle taskWrapper
           var taskWrapper =
-              _tasks.firstWhere((task) => task.status == TaskStatus.idle);
+              _tasks.firstWhere((task) => task.status == TaskStatus.created);
           worker.sendPort.send([taskWrapper.toSend()]);
 
           taskWrapper.status = TaskStatus.ready;
@@ -114,23 +139,6 @@ class ExecutorLeader extends Executor {
     }
   }
 
-  /// close提供几种策略
-  /// 1.立刻关闭【包括isolate立刻kill不继续执行正在执行的，危险】，输出还未执行的【master和worker】，不接收任何消息
-  /// 2.等待worker执行完毕当前的，不接收idle和pull消息，worker idle后自动退出循环和kill自己；所有worker 结束后打印master还有哪些没有执行的；
-  /// 3.等待所有的包括master的执行完毕【不接受新的submit】
-  ///
-  /// 注意，如果submit提交了两个一模一样的对象要warning一下比较好，毕竟state可能造成脏数据
-  /// 
-  /// TODO 这里的逻辑是，全部由executor来控制是immediately还是afterRunningFinished还是afterAllFinished
-  /// 实现方式是通过executor的task状态是idle则说明还没有添加到isolate里执行，ready则是已经添加到isolate待执行；
-  /// 因此如果是immediately（三者都不允许submit），则不需要管task的状态，直接发送让isolate立刻停止即可；
-  /// 如果是afterRunningFinished，则当ready为空【isolate请求获取task来执行不予理会且发送close】时为closed【触发
-  /// 时机就是isolate请求获取task来执行的时机即可】
-  /// 如果是afterAllFinished，则等待ready是空，idle也是空的时候即为closed【也是在isolate请求获取task来执行的时候触发，
-  /// 不过这里允许给task执行，直到发现没有了idle task的时候发送close；注意最终executor的closed要求判断所有的worker都close了
-  /// （available为false）】
-  /// //_receivePort.close();
-  ///status = ExecutorStatus.closed; 这两个最后记得关闭一下
   @override
   FutureOr<void> close([CloseLevel level = CloseLevel.afterRunningFinished]) {
     if (status == ExecutorStatus.created) {
@@ -148,19 +156,30 @@ class ExecutorLeader extends Executor {
           worker.available = false;
           worker.close();
         });
-        _workers.clear();
+        _receivePort.close();
         status = ExecutorStatus.closed;
         return null;
       case CloseLevel.afterRunningFinished:
         if (_tasks
-            .where((element) => element.status == TaskStatus.ready)
+            .where((taskWrapper) => taskWrapper.status == TaskStatus.ready)
             .isEmpty) {
+          _workers.values.forEach((worker) {
+            worker.available = false;
+            worker.close();
+          });
+          _receivePort.close();
           status = ExecutorStatus.closed;
           return null;
         }
         break;
       case CloseLevel.afterAllFinished:
+        // finished tasks will remove from this queue.
         if (_tasks.isEmpty) {
+          _workers.values.forEach((worker) {
+            worker.available = false;
+            worker.close();
+          });
+          _receivePort.close();
           status = ExecutorStatus.closed;
           return null;
         }
@@ -179,7 +198,7 @@ class ExecutorLeader extends Executor {
     } else if (status == ExecutorStatus.created) {
       throw StateError('executor is not initialized.');
     }
-    
+
     if (_tasks.any((taskWrapper) => taskWrapper.task == task)) {
       _log.warning(
           'the task is already in the queue to be executed on the executor');

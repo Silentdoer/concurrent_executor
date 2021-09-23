@@ -18,7 +18,7 @@ class TaskWrapperBase<R> {
 class TaskWrapper<R> extends TaskWrapperBase<R> {
   static int _taskIdSeed = 1;
 
-  TaskStatus status = TaskStatus.idle;
+  TaskStatus status = TaskStatus.created;
 
   Completer<R> completer;
 

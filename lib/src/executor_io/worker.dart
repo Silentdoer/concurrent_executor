@@ -35,7 +35,7 @@ class ExecutorWorker {
   /// ignore close level, controlled by executor master
   FutureOr<void> close(
       /* [CloseLevel level = CloseLevel.afterRunningFinished] */) {
-    sendPort.send(CloseMessage());
+    sendPort.send(CloseMessage()..level = CloseLevel.immediately);
     return null;
   }
 }

@@ -18,9 +18,8 @@ class ErrorMessageState extends WorkerMessageState {
 }
 
 enum MessageType {
-  /// worker is idle
+  /// worker is idle, request pull tasks from executor
   idle,
-  pull,
   success,
   error,
 }
