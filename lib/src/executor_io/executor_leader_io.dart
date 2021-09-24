@@ -159,11 +159,11 @@ class ExecutorLeader extends Executor {
     status = ExecutorStatus.closing;
     switch (level) {
       case CloseLevel.immediately:
+        status = ExecutorStatus.closed;
+        _receivePort.close();
         _workers.values.forEach((worker) {
           worker.close();
         });
-        _receivePort.close();
-        status = ExecutorStatus.closed;
         return null;
       case CloseLevel.afterRunningFinished:
         if (_tasks
@@ -205,7 +205,7 @@ class ExecutorLeader extends Executor {
 
     if (_tasks.any((taskWrapper) => taskWrapper.task == task)) {
       _log.warning(
-          'the task is already in the queue to be executed on the executor');
+          'the task already exists in the queue and will be executed multiple times');
     }
     // find out first available and idle worker
     var availableWorker =

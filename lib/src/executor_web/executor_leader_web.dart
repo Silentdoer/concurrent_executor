@@ -91,7 +91,7 @@ class ExecutorLeader extends Executor {
 
     if (_tasks.any((taskWrapper) => taskWrapper.task == task)) {
       _log.warning(
-          'the task is already in the queue to be executed on the executor');
+          'The task already exists in the queue and will be executed multiple times');
     }
 
     var completer = Completer<R>();

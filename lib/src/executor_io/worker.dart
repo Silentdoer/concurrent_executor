@@ -76,6 +76,11 @@ class _IsolateWorker {
     // after all core worker inited, and executor inited, then startup event loop.
     await _taskWaiter.future;
     _taskWaiter = Completer<List<TaskWrapperBase<dynamic>>>();
+
+    // when worker inited, inner tasks is always empty, so just wait for submit task from master.
+    var taskList = await _taskWaiter.future;
+    _taskWaiter = Completer<List<TaskWrapperBase<dynamic>>>();
+    _tasks.addAll(taskList);
     while (_avaiable) {
       if (_tasks.isNotEmpty) {
         var taskWrapper = _tasks.removeFirst();
@@ -93,7 +98,6 @@ class _IsolateWorker {
             ..state = ErrorMessageState(taskWrapper.taskId, e, s.toString()));
         }
       } else {
-        // worker's tasks is empty, pull some from master
         masterSendPort.send(WorkerMessage(MessageType.idle, currentDebugName));
         var taskList = await _taskWaiter.future;
         // reset for next use

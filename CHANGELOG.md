@@ -31,3 +31,7 @@
 
 - support fetch executor unfinished tasks.
 - fix afterRunningFinished
+
+## 0.7.2
+
+- fix multi ilde message from worker in initial status

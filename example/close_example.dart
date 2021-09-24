@@ -81,7 +81,7 @@ void main() async {
   //await executor.close(CloseLevel.immediately);
   //executor.close(CloseLevel.immediately);
   //await executor.close(CloseLevel.afterRunningFinished);
-  await executor.close(CloseLevel.afterRunningFinished);
+  await executor.close();
   //await executor.close(CloseLevel.afterAllFinished);
   //executor.close(CloseLevel.afterAllFinished);
   print('the following ${executor.unfinishedTasks.length} tasks has not executed completely:');
