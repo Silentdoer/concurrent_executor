@@ -35,8 +35,14 @@ class ExecutorWorker {
   /// ignore close level, controlled by executor master
   FutureOr<void> close(
       /* [CloseLevel level = CloseLevel.afterRunningFinished] */) {
+    available = false;
     sendPort.send(CloseMessage()..level = CloseLevel.immediately);
     return null;
+  }
+
+  @override
+  String toString() {
+    return 'debugName:$debugName, idle:$idle, available:$available';
   }
 }
 
@@ -67,6 +73,9 @@ class _IsolateWorker {
     _receivePort = ReceivePort(currentDebugName);
     masterSendPort.send(_receivePort.sendPort);
     _receivePort.listen(_messageProcessor);
+    // after all core worker inited, and executor inited, then startup event loop.
+    await _taskWaiter.future;
+    _taskWaiter = Completer<List<TaskWrapperBase<dynamic>>>();
     while (_avaiable) {
       if (_tasks.isNotEmpty) {
         var taskWrapper = _tasks.removeFirst();
@@ -79,7 +88,7 @@ class _IsolateWorker {
               WorkerMessage(MessageType.success, currentDebugName)
                 ..state = SuccessMessageState(taskWrapper.taskId, result));
         } catch (e, s) {
-          /* log.warning('task: ${taskWrapper.taskId} has an exception: $e'); */
+          /* _log.warning('task: ${taskWrapper.taskId} has an exception: $e'); */
           masterSendPort.send(WorkerMessage(MessageType.error, currentDebugName)
             ..state = ErrorMessageState(taskWrapper.taskId, e, s.toString()));
         }
@@ -101,8 +110,10 @@ class _IsolateWorker {
       // controlled by executor master
       _avaiable = false;
       _receivePort.close();
-      //_taskWaiter.complete([]);
-      Isolate.current.kill();
+      _taskWaiter.complete([]);
+      Isolate.current.kill(priority: Isolate.immediate);
+    } else if (message is StartupMessage) {
+      _taskWaiter.complete([]);
     } else {
       _log.warning(
           'unknown message type: ${message.runtimeType}, message: $message');

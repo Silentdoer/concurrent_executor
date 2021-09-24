@@ -26,3 +26,8 @@
 ## 0.7.0
 
 - update english comment, finished executor close method.
+
+## 0.7.1
+
+- support fetch executor unfinished tasks.
+- fix afterRunningFinished

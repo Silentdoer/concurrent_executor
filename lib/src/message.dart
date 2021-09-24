@@ -44,3 +44,5 @@ class WorkerMessage {
 class CloseMessage {
   CloseLevel level = CloseLevel.afterRunningFinished;
 }
+
+class StartupMessage {}

@@ -70,7 +70,7 @@ void main() async {
   }
   // endregion
 
-  executor.close();
+  await executor.close();
 }
 
 class Foo extends ConcurrentTask<void> {

@@ -13,8 +13,10 @@ abstract class Executor {
   @protected
   Future<void> init();
 
+  Iterable<TaskWrapper<dynamic>> get unfinishedTasks;
+
   /// need user close executor manually
-  FutureOr<void> close([CloseLevel level = CloseLevel.immediately]);
+  FutureOr<void> close([CloseLevel level = CloseLevel.afterRunningFinished]);
 
   /// create an executor instance, coreWorkerSize is the number of isolates executing the task
   static Future<Executor> createExecutor([int coreWorkerSize = 1]) async {

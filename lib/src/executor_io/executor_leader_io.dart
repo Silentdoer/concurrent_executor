@@ -66,8 +66,14 @@ class ExecutorLeader extends Executor {
     }
     // all workers are initialized
     bstream.listen(_messageProcessor);
+    _workers.values.forEach((worker) {
+      worker.sendPort.send(StartupMessage());
+    });
     status = ExecutorStatus.running;
   }
+
+  @override
+  Iterable<TaskWrapper<dynamic>> get unfinishedTasks => _tasks;
 
   /// process message for master
   void _messageProcessor(dynamic message) {
@@ -83,11 +89,12 @@ class ExecutorLeader extends Executor {
         }
         if (status == ExecutorStatus.closing) {
           if (_closeLevel == CloseLevel.afterRunningFinished) {
-            worker.available = false;
             worker.close();
-            // all worker has been closed.
-            if (!_workers.values.any((w) => w.available)) {
-              assert (_tasks.isEmpty);
+            // all worker finished inner tasks.
+            if (!_workers.values.any((w) => w.available) ||
+                !_tasks.any(
+                    (taskWrapper) => taskWrapper.status == TaskStatus.ready)) {
+              //assert (_tasks.where((taskWrapper) => taskWrapper.status == TaskStatus.ready).isEmpty);
               _receivePort.close();
               status = ExecutorStatus.closed;
               _closeCompleter!.complete();
@@ -97,7 +104,6 @@ class ExecutorLeader extends Executor {
             // all finished task(success, failured) will removed from _tasks
             if (_tasks.isEmpty) {
               _workers.values.forEach((worker) {
-                worker.available = false;
                 worker.close();
               });
               _receivePort.close();
@@ -107,12 +113,13 @@ class ExecutorLeader extends Executor {
             }
           }
         }
-        if (_tasks.where((task) => task.status == TaskStatus.created).isNotEmpty) {
+        if (_tasks
+            .where((task) => task.status == TaskStatus.created)
+            .isNotEmpty) {
           // find out first idle taskWrapper
           var taskWrapper =
               _tasks.firstWhere((task) => task.status == TaskStatus.created);
           worker.sendPort.send([taskWrapper.toSend()]);
-
           taskWrapper.status = TaskStatus.ready;
           worker.idle = false;
         }
@@ -153,7 +160,6 @@ class ExecutorLeader extends Executor {
     switch (level) {
       case CloseLevel.immediately:
         _workers.values.forEach((worker) {
-          worker.available = false;
           worker.close();
         });
         _receivePort.close();
@@ -164,7 +170,6 @@ class ExecutorLeader extends Executor {
             .where((taskWrapper) => taskWrapper.status == TaskStatus.ready)
             .isEmpty) {
           _workers.values.forEach((worker) {
-            worker.available = false;
             worker.close();
           });
           _receivePort.close();
@@ -176,7 +181,6 @@ class ExecutorLeader extends Executor {
         // finished tasks will remove from this queue.
         if (_tasks.isEmpty) {
           _workers.values.forEach((worker) {
-            worker.available = false;
             worker.close();
           });
           _receivePort.close();

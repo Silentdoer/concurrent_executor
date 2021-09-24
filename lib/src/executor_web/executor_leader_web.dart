@@ -43,6 +43,9 @@ class ExecutorLeader extends Executor {
   }
 
   @override
+  Iterable<TaskWrapper<dynamic>> get unfinishedTasks => _tasks;
+
+  @override
   FutureOr<void> close([CloseLevel level = CloseLevel.afterRunningFinished]) {
     if (status == ExecutorStatus.created) {
       throw StateError('executor has not initialized.');
@@ -122,7 +125,7 @@ class ExecutorLeader extends Executor {
         //.where((element) => element.status == TaskStatus.idle)
         .isNotEmpty) {
       var taskWrapper = _tasks.first;
-          //_tasks.firstWhere((element) => element.status == TaskStatus.idle);
+      //_tasks.firstWhere((element) => element.status == TaskStatus.idle);
       _readyTask(taskWrapper).whenComplete(_triggerNextTaskExecution);
     }
   }
