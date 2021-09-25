@@ -40,3 +40,7 @@
 
 - refactor unfinishedTasks method
 - update README example
+
+## 0.9.0
+
+- update minimum sdk support.
