@@ -44,3 +44,7 @@
 ## 0.9.0
 
 - update minimum sdk support.
+
+## 0.9.1
+
+- fix meta
