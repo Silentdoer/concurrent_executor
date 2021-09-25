@@ -48,3 +48,7 @@
 ## 0.9.1
 
 - fix meta
+
+## 0.9.2
+
+- update minimum sdk to 2.12.0
