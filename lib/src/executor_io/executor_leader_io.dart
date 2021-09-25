@@ -73,7 +73,8 @@ class ExecutorLeader extends Executor {
   }
 
   @override
-  Iterable<TaskWrapper<dynamic>> get unfinishedTasks => _tasks;
+  Iterable<ConcurrentTask<dynamic>> get unfinishedTasks =>
+      _tasks.map((e) => e.task);
 
   /// process message for master
   void _messageProcessor(dynamic message) {

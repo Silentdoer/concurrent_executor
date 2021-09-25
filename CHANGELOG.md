@@ -35,3 +35,8 @@
 ## 0.7.2
 
 - fix multi ilde message from worker in initial status
+
+## 0.8.0
+
+- refactor unfinishedTasks method
+- update README example

@@ -43,7 +43,8 @@ class ExecutorLeader extends Executor {
   }
 
   @override
-  Iterable<TaskWrapper<dynamic>> get unfinishedTasks => _tasks;
+  Iterable<ConcurrentTask<dynamic>> get unfinishedTasks =>
+      _tasks.map((e) => e.task);
 
   @override
   FutureOr<void> close([CloseLevel level = CloseLevel.afterRunningFinished]) {

@@ -2,15 +2,10 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:concurrent_executor/concurrent_executor.dart';
-import 'package:concurrent_executor/src/message.dart';
 import 'package:pedantic/pedantic.dart';
 
-// 6 tasks foo, foo2, foo2, foo5, foo6, foo3
-// worker2 run 4 tasks, worker1 run 2 tasks
-// worker2 idle start 5 times, worker1 idle start 3 times.
-// worker2 idle end 4 times, worker1 idle end 2 times.
 void main() async {
-  var executor = await Executor.createExecutor(2);
+  var executor = await Executor.createExecutor(3);
 
   var foo = Foo();
   unawaited(executor.submit(foo).then((value) => value, onError: (e, s) {
@@ -19,55 +14,46 @@ void main() async {
   }));
 
   var res = executor.submit(foo);
-  //print(res);
+  print(res);
+
   var foo2 = Foo2();
   var res222 = executor.submit(foo2);
-  //print(await res222);
-
-  var res2 = executor.submit(foo2);
-  //print(res2);
+  print(await res222);
 
   var res22 = executor.submit(foo2);
-  // fff
   print(await res22);
 
   var foo3 = Foo3();
   var res3 = executor.submit(foo3);
-  //print(await res3);
+  print(res3);
 
   var res33 = executor.submit(foo3);
   print(res33);
 
-  var res333 = executor.submit(foo3);
-  //print(await res333);
+  var foo33 = Foo3();
+  var res333 = executor.submit(foo33);
+  print(await res333);
 
   var foo4 = Foo4();
   foo4.stat = 'aaaaccc';
   var res44 = executor.submit(foo4);
-  //print(res44);
+  print(res44);
 
   var foo44 = Foo4();
   foo44.stat = 'vvvveee';
   var res444 = executor.submit(foo44);
-  //print(await res444);
+  print(await res444);
 
   var foo5 = Foo5();
   foo5.stat = 99;
   var res5 = executor.submit(foo5);
-  //print(await res5);
+  print(await res5);
 
   var foo6 = Foo6();
   foo6.stat = 'kkkkttt';
   var res6 = executor.submit(foo6);
-  //print(await res6);
+  print(res6);
 
-  var res331 = executor.submit(foo3);
-  //print(res331);
-
-  var res3332 = executor.submit(foo3);
-  //print(await res333);
-
-  // submit 6 tasks
   // region pause
   var receivePort = ReceivePort();
   await Isolate.spawn(pause, receivePort.sendPort);
@@ -81,15 +67,13 @@ void main() async {
   //await executor.close(CloseLevel.immediately);
   //executor.close(CloseLevel.immediately);
   //await executor.close(CloseLevel.afterRunningFinished);
+  // close default is afterRunningFinished
   await executor.close();
   //await executor.close(CloseLevel.afterAllFinished);
   //executor.close(CloseLevel.afterAllFinished);
-  print('the following ${executor.unfinishedTasks.length} tasks has not executed completely:');
-  print(executor.unfinishedTasks.map((e) => e.task.runtimeType));
-
-  //var r2 = ReceivePort();
-  //await Future.delayed(Duration(milliseconds: 5000), () => r2.close());
-  //print('closed test');
+  print(
+      'the following ${executor.unfinishedTasks.length} tasks has not executed completely:');
+  print(executor.unfinishedTasks.map((e) => e.runtimeType));
 }
 
 class Foo extends ConcurrentTask<void> {

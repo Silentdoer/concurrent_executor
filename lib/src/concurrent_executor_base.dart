@@ -13,7 +13,7 @@ abstract class Executor {
   @protected
   Future<void> init();
 
-  Iterable<TaskWrapper<dynamic>> get unfinishedTasks;
+  Iterable<ConcurrentTask<dynamic>> get unfinishedTasks;
 
   /// need user close executor manually
   FutureOr<void> close([CloseLevel level = CloseLevel.afterRunningFinished]);

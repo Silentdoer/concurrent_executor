@@ -1,6 +1,6 @@
 name: concurrent_executor
 description: a concurrent task executor
-version: 0.7.2
+version: 0.8.0
 repository: "https://github.com/Silentdoer/concurrent_executor.git"
 publish_to: "https://pub.dartlang.org"
 
